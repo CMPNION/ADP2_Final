@@ -127,3 +127,14 @@ func (r *PostgresRepo) LockStocksInDB(ctx context.Context, tx *sql.Tx, keys []st
 	}
 	return nil
 }
+
+func (r *PostgresRepo) FindWarehouseForReservation(ctx context.Context, tx *sql.Tx, sku string, qty int64) (string, error) {
+	q := `SELECT warehouse_id FROM product_stocks WHERE sku=$1 AND (total_qty - reserved_qty) >= $2 ORDER BY (total_qty - reserved_qty) DESC LIMIT 1 FOR UPDATE`
+	row := tx.QueryRowContext(ctx, q, sku, qty)
+	var wid string
+	if err := row.Scan(&wid); err != nil {
+		if err == sql.ErrNoRows { return "", nil }
+		return "", err
+	}
+	return wid, nil
+}

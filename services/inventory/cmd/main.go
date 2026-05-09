@@ -3,31 +3,38 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/go-redis/redis/v8"
-	"github.com/yourorg/inventory/internal/infra/nats"
+	natsinfra "github.com/yourorg/inventory/internal/infra/nats"
 	redisinfra "github.com/yourorg/inventory/internal/infra/redis"
 	"github.com/yourorg/inventory/internal/infra/postgres"
 	"github.com/yourorg/inventory/internal/application/usecases"
 	grpcsrv "github.com/yourorg/inventory/internal/delivery/grpc"
+	evpb "github.com/yourorg/proto/events"
+	invpb "github.com/yourorg/inventory/proto"
+	"github.com/nats-io/nats.go"
+	"google.golang.org/grpc"
+	"net"
 )
 
 func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	natsURL := os.Getenv("NATS_URL")
 	redisAddr := os.Getenv("REDIS_ADDR")
-	if dbURL == "" { dbURL = "postgres://postgres:pass@localhost:5432/inventory?sslmode=disable" }
+	if dbURL == "" { dbURL = "postgres://postgres:pass@localhost:5432/inventory_db?sslmode=disable" }
 	if natsURL == "" { natsURL = "nats://localhost:4222" }
 	if redisAddr == "" { redisAddr = "localhost:6379" }
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil { log.Fatalf("db open: %v", err) }
 	defer db.Close()
-	// ping
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil { log.Fatalf("db ping: %v", err) }
@@ -36,13 +43,52 @@ func main() {
 	if err := rdb.Ping(ctx).Err(); err != nil { log.Printf("redis ping: %v", err) }
 
 	natsPub, err := natsinfra.NewPublisher(natsURL)
-	if err != nil { log.Printf("nats connect: %v", err) }
+	if err != nil { log.Fatalf("nats connect: %v", err) }
 
 	repo := postgres.NewPostgresRepo(db)
 	cache := redisinfra.NewCache(rdb)
-	uc := usecases.NewReserveService(repo, cache, cache, natsPub)
+	locker := cache
 
-	// start gRPC server
-	srv := grpcsrv.NewServer(uc)
-	if err := grpcsrv.StartGRPC(":50051", srv); err != nil { log.Fatalf("grpc: %v", err) }
+	reserveUC := usecases.NewReserveService(repo, locker, cache, natsPub)
+	releaseUC := usecases.NewReleaseService(repo, locker, cache, natsPub)
+	confirmUC := usecases.NewConfirmService(repo, locker, cache, natsPub)
+
+	// subscribe to order events
+	_, _ = natsPub.Subscribe("order.created", func(m *nats.Msg) {
+		var ev pb.OrderCreated
+		if err := json.Unmarshal(m.Data, &ev); err != nil { log.Printf("order.created unmarshal: %v", err); return }
+		items := []usecases.ItemReq{}
+		for _, it := range ev.Items { items = append(items, usecases.ItemReq{SKU: it.Sku, WarehouseID: "", Quantity: it.Qty}) }
+		go func(orderID string, items []usecases.ItemReq) {
+			if _, err := reserveUC.ReserveStock(context.Background(), orderID, items); err != nil { log.Printf("reserve err: %v", err) }
+		}(ev.OrderId, items)
+	})
+
+	_, _ = natsPub.Subscribe("order.cancelled", func(m *nats.Msg) {
+		var ev pb.OrderCancelled
+		if err := json.Unmarshal(m.Data, &ev); err != nil { log.Printf("order.cancelled unmarshal: %v", err); return }
+		go func(orderID string){ if err := releaseUC.ReleaseStock(context.Background(), orderID); err != nil { log.Printf("release err: %v", err) } }(ev.OrderId)
+	})
+
+	_, _ = natsPub.Subscribe("order.completed", func(m *nats.Msg) {
+		var ev pb.OrderCompleted
+		if err := json.Unmarshal(m.Data, &ev); err != nil { log.Printf("order.completed unmarshal: %v", err); return }
+		go func(orderID string){ if err := confirmUC.ConfirmStockDeduction(context.Background(), orderID); err != nil { log.Printf("confirm err: %v", err) } }(ev.OrderId)
+	})
+
+	// start gRPC
+	l, err := net.Listen("tcp", ":50051")
+	if err != nil { log.Fatalf("listen: %v", err) }
+	s := grpc.NewServer()
+	server := grpcsrv.NewServer(reserveUC, releaseUC, confirmUC)
+	invpb.RegisterInventoryServer(s, server)
+	go func(){ log.Println("inventory gRPC listening :50051"); if err := s.Serve(l); err != nil { log.Fatalf("serve: %v", err) } }()
+
+	// graceful shutdown
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
+	<-sigc
+	log.Println("shutting down")
+	s.GracefulStop()
+	natsPub.Close()
 }

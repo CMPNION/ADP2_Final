@@ -15,6 +15,8 @@ type Repository interface {
 
 	GetProductStockForUpdate(ctx context.Context, tx *sql.Tx, sku string, warehouseID string) (*entities.ProductStock, error)
 	UpsertProductStock(ctx context.Context, tx *sql.Tx, s *entities.ProductStock) error
+	// Find a warehouse that can satisfy a reservation for sku and qty (FOR UPDATE)
+	FindWarehouseForReservation(ctx context.Context, tx *sql.Tx, sku string, qty int64) (string, error)
 
 	CreateReservation(ctx context.Context, tx *sql.Tx, r *entities.StockReservation) error
 	GetReservationByOrder(ctx context.Context, tx *sql.Tx, orderID string) ([]*entities.StockReservation, error)
