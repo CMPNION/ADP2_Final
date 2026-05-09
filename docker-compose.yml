@@ -1,0 +1,72 @@
+version: '3.8'
+services:
+  postgres_inventory:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: inventory_db
+      POSTGRES_PASSWORD: pass
+    ports: ["5432:5432"]
+
+  postgres_catalog:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: catalog_db
+      POSTGRES_PASSWORD: pass
+    ports: ["5433:5432"]
+
+  postgres_order:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_PASSWORD: pass
+    ports: ["5434:5432"]
+
+  postgres_identity:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: identity_db
+      POSTGRES_PASSWORD: pass
+    ports: ["5435:5432"]
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  nats:
+    image: nats:2
+    ports: ["4222:4222"]
+
+  inventory-service:
+    build: ./services/inventory
+    depends_on: [postgres_inventory, redis, nats]
+    environment:
+      DATABASE_URL: postgres://postgres:pass@postgres_inventory:5432/inventory_db?sslmode=disable
+      REDIS_ADDR: redis:6379
+      NATS_URL: nats://nats:4222
+    ports: ["50051:50051"]
+
+  catalog-service:
+    build: ./services/catalog-service
+    depends_on: [postgres_catalog, nats]
+    environment:
+      DATABASE_URL: postgres://postgres:pass@postgres_catalog:5432/catalog_db?sslmode=disable
+      NATS_URL: nats://nats:4222
+
+  order-service:
+    build: ./services/order-service
+    depends_on: [postgres_order, nats, inventory-service]
+    environment:
+      DATABASE_URL: postgres://postgres:pass@postgres_order:5432/order_db?sslmode=disable
+      NATS_URL: nats://nats:4222
+
+  notification-service:
+    build: ./services/notification-service
+    depends_on: [postgres_identity, nats]
+    environment:
+      DATABASE_URL: postgres://postgres:pass@postgres_identity:5432/identity_db?sslmode=disable
+      NATS_URL: nats://nats:4222
+
+  api-gateway:
+    build: ./api-gateway
+    depends_on: [inventory-service, catalog-service, order-service, notification-service]
+    ports: ["8080:8080"]

@@ -1,0 +1,13 @@
+syntax = "proto3";
+package events;
+option go_package = "github.com/yourorg/proto/events;events";
+message OrderItem { string sku = 1; int64 qty = 2; }
+message OrderCreated { string order_id = 1; repeated OrderItem items = 2; string user_id = 3; }
+message OrderCancelled { string order_id = 1; }
+message OrderCompleted { string order_id = 1; }
+message StockReserved { string order_id = 1; string sku = 2; int64 quantity = 3; string warehouse_id = 4; }
+message StockReleased { string order_id = 1; string sku = 2; int64 quantity = 3; string warehouse_id = 4; }
+message StockConfirmed { string order_id = 1; string sku = 2; }
+message StockLow { string sku = 1; string warehouse_id = 2; int64 available = 3; int64 threshold = 4; }
+message ProductUpdated { string sku = 1; }
+message ProductDeleted { string sku = 1; }

@@ -1,0 +1,7 @@
+syntax = "proto3";
+package order;
+option go_package = "github.com/yourorg/proto/order;order";
+message OrderItem { string sku=1; int64 qty=2; }
+message CreateOrderRequest { string user_id=1; repeated OrderItem items=2; }
+message CreateOrderResponse { string order_id=1; }
+service OrderService { rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse); }

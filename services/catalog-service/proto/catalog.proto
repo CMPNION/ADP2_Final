@@ -1,0 +1,7 @@
+syntax = "proto3";
+package catalog;
+option go_package = "github.com/yourorg/proto/catalog;catalog";
+message Product { string sku=1; string name=2; string description=3; double price=4; }
+message CreateProductRequest { Product product = 1; }
+message CreateProductResponse { string sku = 1; }
+service CatalogService { rpc CreateProduct(CreateProductRequest) returns (CreateProductResponse); }
