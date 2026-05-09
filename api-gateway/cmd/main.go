@@ -1,3 +1,5 @@
 package main
+
 import "log"
-func main(){ log.Println("api-gateway") }
+
+func main() { log.Println("api-gateway") }

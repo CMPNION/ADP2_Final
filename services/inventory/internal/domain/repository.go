@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/yourorg/inventory/internal/domain/entities"
+	"omnichannel/inventory/internal/domain/entities"
 )
 
 // Repository defines persistence operations required by usecases

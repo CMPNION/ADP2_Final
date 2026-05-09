@@ -1,3 +1,5 @@
 package main
+
 import "log"
-func main(){ log.Println("$SERVICE running") }
+
+func main() { log.Println("$SERVICE running") }

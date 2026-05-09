@@ -1,8 +1,18 @@
-module github.com/yourorg/catalog
+module omnichannel/catalog
 
-go 1.21
+go 1.25.0
 
 require (
-	github.com/nats-io/nats.go v1.16.0
-	github.com/lib/pq v1.10.6
+	github.com/nats-io/nats.go v1.51.0
+	omnichannel/proto v0.0.0
 )
+
+require (
+	github.com/klauspost/compress v1.18.5 // indirect
+	github.com/nats-io/nkeys v0.4.15 // indirect
+	github.com/nats-io/nuid v1.0.1 // indirect
+	golang.org/x/crypto v0.50.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
+)
+
+replace omnichannel/proto => ../../proto

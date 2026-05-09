@@ -1,10 +1,10 @@
-module github.com/yourorg/apigateway
+module omnichannel/apigateway
 
-go 1.21
+go 1.25.0
 
 require (
-	google.golang.org/grpc v1.63.0
-	github.com/go-redis/redis/v8 v8.11.5
-	github.com/golang-jwt/jwt/v5 v5.0.0
-	github.com/gorilla/mux v1.8.0
+google.golang.org/grpc v1.53.0
+omnichannel/proto v0.0.0
 )
+
+replace omnichannel/proto => ../proto
