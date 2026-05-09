@@ -1,0 +1,1 @@
+API Gateway: simple proxy with JWT middleware and Redis rate limiting. Endpoints map to gRPC clients. Run with docker-compose.
