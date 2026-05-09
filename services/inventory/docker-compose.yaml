@@ -1,0 +1,31 @@
+version: '3.8'
+services:
+  inventory:
+    build: .
+    depends_on:
+      - db
+      - redis
+      - nats
+    ports:
+      - "50051:50051"
+    environment:
+      - DATABASE_URL=postgres://postgres:pass@db:5432/inventory?sslmode=disable
+      - REDIS_ADDR=redis:6379
+      - NATS_URL=nats://nats:4222
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: inventory
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./migrations:/docker-entrypoint-initdb.d/
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+  nats:
+    image: nats:2
+    ports:
+      - "4222:4222"
