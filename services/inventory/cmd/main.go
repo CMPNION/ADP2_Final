@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	_ "github.com/lib/pq"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"net"
 	"omnichannel/inventory/internal/application/usecases"
@@ -20,6 +22,7 @@ import (
 	natsinfra "omnichannel/inventory/internal/infra/nats"
 	"omnichannel/inventory/internal/infra/postgres"
 	redisinfra "omnichannel/inventory/internal/infra/redis"
+	"omnichannel/inventory/internal/observability"
 	evpb "omnichannel/proto/events"
 	invpb "omnichannel/proto/inventory"
 )
@@ -28,6 +31,8 @@ func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	natsURL := os.Getenv("NATS_URL")
 	redisAddr := os.Getenv("REDIS_ADDR")
+	metricsAddr := os.Getenv("METRICS_ADDR")
+	grpcAddr := os.Getenv("GRPC_ADDR")
 	if dbURL == "" {
 		dbURL = "postgres://postgres:pass@localhost:5432/inventory_db?sslmode=disable"
 	}
@@ -36,6 +41,12 @@ func main() {
 	}
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
+	}
+	if metricsAddr == "" {
+		metricsAddr = ":9090"
+	}
+	if grpcAddr == "" {
+		grpcAddr = ":50051"
 	}
 
 	db, err := sql.Open("postgres", dbURL)
@@ -66,6 +77,27 @@ func main() {
 	reserveUC := usecases.NewReserveService(repo, locker, cache, natsPub)
 	releaseUC := usecases.NewReleaseService(repo, locker, cache, natsPub)
 	confirmUC := usecases.NewConfirmService(repo, locker, cache, natsPub)
+
+	observability.EnsureRegistered()
+
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	metricsMux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})
+	metricsSrv := &http.Server{Addr: metricsAddr, Handler: metricsMux, ReadHeaderTimeout: 5 * time.Second}
+
+	go func() {
+		log.Printf("inventory metrics listening %s", metricsAddr)
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("metrics serve: %v", err)
+		}
+	}()
 
 	// subscribe to order events
 	_, _ = natsPub.Subscribe("order.created", func(m *nats.Msg) {
@@ -112,25 +144,33 @@ func main() {
 	})
 
 	// start gRPC
-	l, err := net.Listen("tcp", ":50051")
+	l, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
-	s := grpc.NewServer()
-	server := grpcsrv.NewServer(reserveUC, releaseUC, confirmUC)
-	invpb.RegisterInventoryServer(s, server)
+	s := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			observability.UnaryMetricsInterceptor(),
+			observability.UnaryLoggingInterceptor(),
+		),
+	)
+	server := grpcsrv.NewServer(repo, reserveUC, releaseUC, confirmUC)
+	invpb.RegisterInventoryServiceServer(s, server)
 	go func() {
-		log.Println("inventory gRPC listening :50051")
+		log.Printf("inventory gRPC listening %s", grpcAddr)
 		if err := s.Serve(l); err != nil {
 			log.Fatalf("serve: %v", err)
 		}
 	}()
 
 	// graceful shutdown
-	sigc := make(chan os.Signal, 1)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
-	<-sigc
+	ctxShutdown, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	<-ctxShutdown.Done()
 	log.Println("shutting down")
 	s.GracefulStop()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+	_ = metricsSrv.Shutdown(shutdownCtx)
 	natsPub.Close()
+	stop()
 }

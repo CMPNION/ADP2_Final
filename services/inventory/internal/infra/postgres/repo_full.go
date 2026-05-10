@@ -3,7 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,7 +57,15 @@ func (r *PostgresRepo) CreateReservation(ctx context.Context, tx *sql.Tx, rr *en
 
 func (r *PostgresRepo) GetReservationByOrder(ctx context.Context, tx *sql.Tx, orderID string) ([]*entities.StockReservation, error) {
 	q := `SELECT id, order_id, sku, warehouse_id, quantity, status, expires_at, created_at FROM stock_reservations WHERE order_id=$1`
-	rows, err := r.db.QueryContext(ctx, q, orderID)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if tx != nil {
+		rows, err = tx.QueryContext(ctx, q, orderID)
+	} else {
+		rows, err = r.db.QueryContext(ctx, q, orderID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +102,42 @@ func (r *PostgresRepo) CreateMovement(ctx context.Context, tx *sql.Tx, m *entiti
 func (r *PostgresRepo) GetLowStock(ctx context.Context, limit int) ([]*entities.ProductStock, error) {
 	q := `SELECT id, sku, warehouse_id, total_qty, reserved_qty, safety_stock_level, created_at, updated_at FROM product_stocks WHERE (total_qty - reserved_qty) < safety_stock_level LIMIT $1`
 	rows, err := r.db.QueryContext(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*entities.ProductStock{}
+	for rows.Next() {
+		var s entities.ProductStock
+		if err := rows.Scan(&s.ID, &s.SKU, &s.WarehouseID, &s.TotalQuantity, &s.ReservedQuantity, &s.SafetyStockLevel, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &s)
+	}
+	return out, nil
+}
+
+func (r *PostgresRepo) ListStocksBySKU(ctx context.Context, sku string) ([]*entities.ProductStock, error) {
+	q := `SELECT id, sku, warehouse_id, total_qty, reserved_qty, safety_stock_level, created_at, updated_at FROM product_stocks WHERE sku=$1`
+	rows, err := r.db.QueryContext(ctx, q, sku)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*entities.ProductStock{}
+	for rows.Next() {
+		var s entities.ProductStock
+		if err := rows.Scan(&s.ID, &s.SKU, &s.WarehouseID, &s.TotalQuantity, &s.ReservedQuantity, &s.SafetyStockLevel, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &s)
+	}
+	return out, nil
+}
+
+func (r *PostgresRepo) ListStocksByWarehouse(ctx context.Context, warehouseID string) ([]*entities.ProductStock, error) {
+	q := `SELECT id, sku, warehouse_id, total_qty, reserved_qty, safety_stock_level, created_at, updated_at FROM product_stocks WHERE warehouse_id=$1`
+	rows, err := r.db.QueryContext(ctx, q, warehouseID)
 	if err != nil {
 		return nil, err
 	}
@@ -146,9 +190,8 @@ func (r *PostgresRepo) ListWarehouses(ctx context.Context) ([]*entities.Warehous
 func (r *PostgresRepo) LockStocksInDB(ctx context.Context, tx *sql.Tx, keys []string) error {
 	// keys are sku:warehouse
 	for _, k := range keys {
-		var sku, wh string
-		n, _ := fmt.Sscanf(k, "%s:%s", &sku, &wh)
-		if n != 2 {
+		sku, wh, ok := strings.Cut(k, ":")
+		if !ok || sku == "" || wh == "" {
 			continue
 		}
 		q := `SELECT id FROM product_stocks WHERE sku=$1 AND warehouse_id=$2 FOR UPDATE`

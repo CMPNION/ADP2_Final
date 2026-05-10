@@ -1,7 +1,25 @@
 syntax = "proto3";
 package order;
-option go_package = "github.com/yourorg/proto/order;order";
-message OrderItem { string sku=1; int64 qty=2; }
-message CreateOrderRequest { string user_id=1; repeated OrderItem items=2; }
-message CreateOrderResponse { string order_id=1; }
-service OrderService { rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse); }
+option go_package = "omnichannel/proto/order;order";
+
+message OrderItem { string sku = 1; int64 qty = 2; }
+message CreateOrderRequest { string user_id = 1; repeated OrderItem items = 2; }
+message CreateOrderResponse { string order_id = 1; }
+message CancelOrderRequest { string order_id = 1; }
+message CancelOrderResponse { bool success = 1; }
+message GetOrderRequest { string order_id = 1; }
+message GetOrderResponse { string order_id = 1; string user_id = 2; repeated OrderItem items = 3; string status = 4; }
+message UpdateStatusRequest { string order_id = 1; string status = 2; }
+message UpdateStatusResponse { bool success = 1; }
+message CalculateTotalRequest { repeated OrderItem items = 1; }
+message CalculateTotalResponse { double total = 1; }
+message BulkGetOrdersRequest { repeated string order_id = 1; }
+message BulkGetOrdersResponse { repeated GetOrderResponse orders = 1; }
+service OrderService {
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+  rpc UpdateStatus(UpdateStatusRequest) returns (UpdateStatusResponse);
+  rpc CalculateTotal(CalculateTotalRequest) returns (CalculateTotalResponse);
+  rpc BulkGetOrders(BulkGetOrdersRequest) returns (BulkGetOrdersResponse);
+}

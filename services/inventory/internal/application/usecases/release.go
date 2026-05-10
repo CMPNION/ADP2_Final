@@ -73,7 +73,7 @@ func (s *ReleaseService) ReleaseStock(ctx context.Context, orderID string) error
 		}
 		// publish
 		evt := map[string]interface{}{"order_id": orderID, "sku": r.SKU, "quantity": r.Quantity, "warehouse_id": r.WarehouseID}
-		if payload, e := json.Marshal(evt); e == nil {
+		if payload, e := json.Marshal(evt); e == nil && s.publisher != nil {
 			_ = s.publisher.Publish("inventory.stock.released", payload)
 		}
 		// refresh cache

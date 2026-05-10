@@ -1,7 +1,22 @@
 syntax = "proto3";
 package catalog;
-option go_package = "github.com/yourorg/proto/catalog;catalog";
-message Product { string sku=1; string name=2; string description=3; double price=4; }
+option go_package = "omnichannel/proto/catalog;catalog";
+
+message Product { string sku = 1; string name = 2; string description = 3; double price = 4; }
 message CreateProductRequest { Product product = 1; }
 message CreateProductResponse { string sku = 1; }
-service CatalogService { rpc CreateProduct(CreateProductRequest) returns (CreateProductResponse); }
+message GetProductRequest { string sku = 1; }
+message GetProductResponse { Product product = 1; }
+message SearchProductsRequest { string query = 1; }
+message SearchProductsResponse { repeated Product products = 1; }
+message UpdatePriceRequest { string sku = 1; double price = 2; }
+message UpdatePriceResponse { bool success = 1; }
+message BulkGetProductsRequest { repeated string sku = 1; }
+message BulkGetProductsResponse { repeated Product products = 1; }
+service CatalogService {
+  rpc CreateProduct(CreateProductRequest) returns (CreateProductResponse);
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
+  rpc SearchProducts(SearchProductsRequest) returns (SearchProductsResponse);
+  rpc UpdatePrice(UpdatePriceRequest) returns (UpdatePriceResponse);
+  rpc BulkGetProducts(BulkGetProductsRequest) returns (BulkGetProductsResponse);
+}

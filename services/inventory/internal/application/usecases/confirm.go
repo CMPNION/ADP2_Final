@@ -70,7 +70,7 @@ func (s *ConfirmService) ConfirmStockDeduction(ctx context.Context, orderID stri
 		}
 		// publish confirmed
 		evt := map[string]interface{}{"order_id": orderID, "sku": r.SKU}
-		if payload, e := json.Marshal(evt); e == nil {
+		if payload, e := json.Marshal(evt); e == nil && s.publisher != nil {
 			_ = s.publisher.Publish("inventory.stock.confirmed", payload)
 		}
 		// refresh cache
@@ -78,7 +78,9 @@ func (s *ConfirmService) ConfirmStockDeduction(ctx context.Context, orderID stri
 		// safety check
 		if ps.AvailableQuantity() < ps.SafetyStockLevel {
 			payload, _ := json.Marshal(map[string]interface{}{"sku": ps.SKU, "warehouse_id": ps.WarehouseID, "available": ps.AvailableQuantity(), "threshold": ps.SafetyStockLevel})
-			_ = s.publisher.Publish("inventory.stock.low", payload)
+			if s.publisher != nil {
+				_ = s.publisher.Publish("inventory.stock.low", payload)
+			}
 		}
 	}
 

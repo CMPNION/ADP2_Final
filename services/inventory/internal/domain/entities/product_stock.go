@@ -17,10 +17,18 @@ func (p *ProductStock) AvailableQuantity() int64 {
 	return p.TotalQuantity - p.ReservedQuantity
 }
 
+func (p *ProductStock) Reserve(qty int64) {
+	p.ReservedQuantity += qty
+}
+
 func (p *ProductStock) Deduct(qty int64) {
 	p.TotalQuantity -= qty
+	p.ReservedQuantity -= qty
 	if p.TotalQuantity < 0 {
 		p.TotalQuantity = 0
+	}
+	if p.ReservedQuantity < 0 {
+		p.ReservedQuantity = 0
 	}
 }
 

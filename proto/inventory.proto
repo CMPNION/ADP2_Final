@@ -1,0 +1,53 @@
+syntax = "proto3";
+package inventory;
+option go_package = "omnichannel/proto/inventory;inventory";
+
+message ReservationItem { string sku = 1; string warehouse_id = 2; int64 qty = 3; }
+message ReserveStockRequest { string order_id = 1; repeated ReservationItem items = 2; }
+message ReserveStockResponse { bool success = 1; string message = 2; }
+message ReleaseStockRequest { string order_id = 1; }
+message ReleaseStockResponse { bool success = 1; }
+message ConfirmStockDeductionRequest { string order_id = 1; }
+message ConfirmStockDeductionResponse { bool success = 1; }
+message GetStockBySKURequest { string sku = 1; }
+message GetStockBySKUResponse { string sku = 1; int64 total_available = 2; int64 total_reserved = 3; }
+message StockRecord {
+  string sku = 1;
+  string warehouse_id = 2;
+  int64 total_quantity = 3;
+  int64 reserved_quantity = 4;
+  int64 available_quantity = 5;
+  int64 safety_stock_level = 6;
+}
+message WarehouseRecord { string warehouse_id = 1; string name = 2; string location = 3; bool is_active = 4; }
+message ListStocksByWarehouseRequest { string warehouse_id = 1; }
+message ListStocksByWarehouseResponse { repeated StockRecord stocks = 1; }
+message AddStockReceiptRequest { string sku = 1; string warehouse_id = 2; int64 quantity = 3; string receipt_id = 4; }
+message AddStockReceiptResponse { bool success = 1; }
+message TransferStockRequest { string sku = 1; string from_warehouse_id = 2; string to_warehouse_id = 3; int64 quantity = 4; string reference_id = 5; }
+message TransferStockResponse { bool success = 1; }
+message UpdateSafetyStockLevelRequest { string sku = 1; string warehouse_id = 2; int64 level = 3; }
+message UpdateSafetyStockLevelResponse { bool success = 1; }
+message GetLowStockItemsRequest { int32 limit = 1; }
+message GetLowStockItemsResponse { repeated StockRecord stocks = 1; }
+message CreateWarehouseRequest { string name = 1; string location = 2; }
+message CreateWarehouseResponse { bool success = 1; string warehouse_id = 2; }
+message UpdateWarehouseInfoRequest { string warehouse_id = 1; string name = 2; string location = 3; bool is_active = 4; }
+message UpdateWarehouseInfoResponse { bool success = 1; }
+message ListWarehousesRequest {}
+message ListWarehousesResponse { repeated WarehouseRecord warehouses = 1; }
+
+service InventoryService {
+  rpc ReserveStock(ReserveStockRequest) returns (ReserveStockResponse);
+  rpc ReleaseStock(ReleaseStockRequest) returns (ReleaseStockResponse);
+  rpc ConfirmStockDeduction(ConfirmStockDeductionRequest) returns (ConfirmStockDeductionResponse);
+  rpc GetStockBySKU(GetStockBySKURequest) returns (GetStockBySKUResponse);
+  rpc ListStocksByWarehouse(ListStocksByWarehouseRequest) returns (ListStocksByWarehouseResponse);
+  rpc AddStockReceipt(AddStockReceiptRequest) returns (AddStockReceiptResponse);
+  rpc TransferStock(TransferStockRequest) returns (TransferStockResponse);
+  rpc UpdateSafetyStockLevel(UpdateSafetyStockLevelRequest) returns (UpdateSafetyStockLevelResponse);
+  rpc GetLowStockItems(GetLowStockItemsRequest) returns (GetLowStockItemsResponse);
+  rpc CreateWarehouse(CreateWarehouseRequest) returns (CreateWarehouseResponse);
+  rpc UpdateWarehouseInfo(UpdateWarehouseInfoRequest) returns (UpdateWarehouseInfoResponse);
+  rpc ListWarehouses(ListWarehousesRequest) returns (ListWarehousesResponse);
+}

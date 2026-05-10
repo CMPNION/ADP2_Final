@@ -1,0 +1,7 @@
+.App { font-family: Arial, sans-serif; padding: 12px; }
+.nav { display:flex; gap:8px; margin-bottom:12px }
+.nav button { padding:8px 12px; }
+.main { padding:12px; background:#f9f9f9; border-radius:6px }
+input { margin:6px; padding:6px }
+button { margin:6px; padding:6px }
+pre { background:#222; color:#eee; padding:12px; border-radius:4px; overflow:auto }
