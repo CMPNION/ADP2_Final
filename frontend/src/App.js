@@ -15,6 +15,9 @@ function App() {
         <button onClick={() => setView('inventory')}>Inventory</button>
         <button onClick={() => setView('reserve')}>Reserve</button>
         <button onClick={() => setView('admin')}>Admin</button>
+        <button onClick={() => setView('catalog')}>Catalog</button>
+        <button onClick={() => setView('orders')}>Orders</button>
+        <button onClick={() => setView('notifications')}>Notifications</button>
         { token ? <button onClick={onLogout}>Logout</button> : <button onClick={() => setView('login')}>Login</button> }
       </nav>
       <main className="main">
@@ -22,6 +25,9 @@ function App() {
         {view === 'inventory' && <Inventory token={token} />}
         {view === 'reserve' && <Reserve token={token} />}
         {view === 'admin' && <Admin token={token} />}
+        {view === 'catalog' && <Catalog token={token} />}
+        {view === 'orders' && <Orders token={token} />}
+        {view === 'notifications' && <Notifications token={token} />}
         {view === 'login' && <Login onLogin={onLogin} />}
       </main>
     </div>
@@ -246,6 +252,209 @@ function Login({onLogin}){
       <div>
         <button onClick={doRegister}>Register</button>
         <button onClick={doLogin}>Login</button>
+      </div>
+      <pre>{msg && JSON.stringify(msg,null,2)}</pre>
+    </div>
+  )
+}
+
+function Catalog({token}) {
+  const [sku, setSku] = useState('')
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [price, setPrice] = useState(0)
+  const [productId, setProductId] = useState('')
+  const [searchQ, setSearchQ] = useState('')
+  const [msg, setMsg] = useState(null)
+
+  const createProduct = async () => {
+    const body = { sku, name, description, price: Number(price) }
+    const r = await fetch('/catalog/products', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    setMsg(await r.json())
+  }
+
+  const getProduct = async () => {
+    const r = await fetch(`/catalog/products?product_id=${encodeURIComponent(productId)}`, { headers: getAuthHeaders(token) })
+    setMsg(await r.json())
+  }
+
+  const searchProducts = async () => {
+    const r = await fetch(`/catalog/search?q=${encodeURIComponent(searchQ)}`, { headers: getAuthHeaders(token) })
+    setMsg(await r.json())
+  }
+
+  const updatePrice = async () => {
+    const body = { product_id: productId, new_price: Number(price) }
+    const r = await fetch('/catalog/price', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    setMsg(await r.json())
+  }
+
+  return (
+    <div>
+      <h3>Catalog Management</h3>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Create Product</h4>
+        <input placeholder="SKU" value={sku} onChange={e=>setSku(e.target.value)} />
+        <input placeholder="Name" value={name} onChange={e=>setName(e.target.value)} />
+        <input placeholder="Description" value={description} onChange={e=>setDescription(e.target.value)} />
+        <input type="number" placeholder="Price" value={price} onChange={e=>setPrice(e.target.value)} />
+        <button onClick={createProduct}>Create</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Get Product</h4>
+        <input placeholder="Product ID" value={productId} onChange={e=>setProductId(e.target.value)} />
+        <button onClick={getProduct}>Get</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Search Products</h4>
+        <input placeholder="Search query" value={searchQ} onChange={e=>setSearchQ(e.target.value)} />
+        <button onClick={searchProducts}>Search</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Update Price</h4>
+        <input placeholder="Product ID" value={productId} onChange={e=>setProductId(e.target.value)} />
+        <input type="number" placeholder="New Price" value={price} onChange={e=>setPrice(e.target.value)} />
+        <button onClick={updatePrice}>Update</button>
+      </div>
+      <pre>{msg && JSON.stringify(msg,null,2)}</pre>
+    </div>
+  )
+}
+
+function Orders({token}) {
+  const [orderId, setOrderId] = useState('')
+  const [customerId, setCustomerId] = useState('')
+  const [items, setItems] = useState('')
+  const [status, setStatus] = useState('')
+  const [msg, setMsg] = useState(null)
+
+  const createOrder = async () => {
+    try {
+      const itemsArray = JSON.parse(items || '[]')
+      const body = { customer_id: customerId, items: itemsArray }
+      const r = await fetch('/orders', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(body) })
+      setMsg(await r.json())
+    } catch(e) {
+      setMsg({error: 'Invalid JSON in items'})
+    }
+  }
+
+  const getOrder = async () => {
+    const r = await fetch(`/orders?order_id=${encodeURIComponent(orderId)}`, { headers: getAuthHeaders(token) })
+    setMsg(await r.json())
+  }
+
+  const cancelOrder = async () => {
+    const body = { order_id: orderId }
+    const r = await fetch('/orders/cancel', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    setMsg(await r.json())
+  }
+
+  const updateStatus = async () => {
+    const body = { order_id: orderId, new_status: status }
+    const r = await fetch('/orders/status', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    setMsg(await r.json())
+  }
+
+  const calculateTotal = async () => {
+    try {
+      const itemsArray = JSON.parse(items || '[]')
+      const body = { items: itemsArray }
+      const r = await fetch('/orders/calculate', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(body) })
+      setMsg(await r.json())
+    } catch(e) {
+      setMsg({error: 'Invalid JSON in items'})
+    }
+  }
+
+  return (
+    <div>
+      <h3>Order Management</h3>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Create Order</h4>
+        <input placeholder="Customer ID" value={customerId} onChange={e=>setCustomerId(e.target.value)} />
+        <textarea placeholder='Items JSON: [{"product_id":"...", "qty":1, "price":10}]' value={items} onChange={e=>setItems(e.target.value)} />
+        <button onClick={createOrder}>Create</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Get Order</h4>
+        <input placeholder="Order ID" value={orderId} onChange={e=>setOrderId(e.target.value)} />
+        <button onClick={getOrder}>Get</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Update Status</h4>
+        <input placeholder="Order ID" value={orderId} onChange={e=>setOrderId(e.target.value)} />
+        <input placeholder="New Status" value={status} onChange={e=>setStatus(e.target.value)} />
+        <button onClick={updateStatus}>Update</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Cancel Order</h4>
+        <input placeholder="Order ID" value={orderId} onChange={e=>setOrderId(e.target.value)} />
+        <button onClick={cancelOrder}>Cancel</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Calculate Total</h4>
+        <textarea placeholder='Items JSON: [{"product_id":"...", "qty":1, "price":10}]' value={items} onChange={e=>setItems(e.target.value)} />
+        <button onClick={calculateTotal}>Calculate</button>
+      </div>
+      <pre>{msg && JSON.stringify(msg,null,2)}</pre>
+    </div>
+  )
+}
+
+function Notifications({token}) {
+  const [email, setEmail] = useState('')
+  const [subject, setSubject] = useState('')
+  const [body, setBody] = useState('')
+  const [orderId, setOrderId] = useState('')
+  const [sku, setSku] = useState('')
+  const [warehouseId, setWarehouseId] = useState('')
+  const [currentQty, setCurrentQty] = useState(0)
+  const [threshold, setThreshold] = useState(0)
+  const [msg, setMsg] = useState(null)
+
+  const sendEmail = async () => {
+    const reqBody = { to: email, subject, body }
+    const r = await fetch('/notifications/email', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(reqBody) })
+    setMsg(await r.json())
+  }
+
+  const sendOrderConfirm = async () => {
+    const reqBody = { order_id: orderId, customer_email: email, order_details: body }
+    const r = await fetch('/notifications/order-confirmation', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(reqBody) })
+    setMsg(await r.json())
+  }
+
+  const sendStockAlert = async () => {
+    const reqBody = { sku, warehouse_id: warehouseId, current_qty: Number(currentQty), threshold: Number(threshold) }
+    const r = await fetch('/notifications/stock-alert', { method: 'POST', headers: {...getAuthHeaders(token), 'Content-Type':'application/json'}, body: JSON.stringify(reqBody) })
+    setMsg(await r.json())
+  }
+
+  return (
+    <div>
+      <h3>Notifications</h3>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Send Email</h4>
+        <input placeholder="To Email" value={email} onChange={e=>setEmail(e.target.value)} />
+        <input placeholder="Subject" value={subject} onChange={e=>setSubject(e.target.value)} />
+        <textarea placeholder="Body" value={body} onChange={e=>setBody(e.target.value)} />
+        <button onClick={sendEmail}>Send</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Send Order Confirmation</h4>
+        <input placeholder="Order ID" value={orderId} onChange={e=>setOrderId(e.target.value)} />
+        <input placeholder="Customer Email" value={email} onChange={e=>setEmail(e.target.value)} />
+        <textarea placeholder="Order Details" value={body} onChange={e=>setBody(e.target.value)} />
+        <button onClick={sendOrderConfirm}>Send</button>
+      </div>
+      <div style={{marginBottom: '20px'}}>
+        <h4>Send Stock Alert</h4>
+        <input placeholder="SKU" value={sku} onChange={e=>setSku(e.target.value)} />
+        <input placeholder="Warehouse ID" value={warehouseId} onChange={e=>setWarehouseId(e.target.value)} />
+        <input type="number" placeholder="Current Qty" value={currentQty} onChange={e=>setCurrentQty(e.target.value)} />
+        <input type="number" placeholder="Threshold" value={threshold} onChange={e=>setThreshold(e.target.value)} />
+        <button onClick={sendStockAlert}>Send Alert</button>
       </div>
       <pre>{msg && JSON.stringify(msg,null,2)}</pre>
     </div>

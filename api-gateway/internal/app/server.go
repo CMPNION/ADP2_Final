@@ -97,6 +97,21 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/inventory/transfer", s.auth(s.limit(s.transferStock)))
 	mux.HandleFunc("/inventory/safety", s.auth(s.limit(s.updateSafetyStockLevel)))
 	mux.HandleFunc("/inventory/warehouse", s.auth(s.limit(s.createOrUpdateWarehouse))) // POST create, PUT update
+	// catalog operations
+	mux.HandleFunc("/catalog/products", s.auth(s.limit(s.catalogHandler)))
+	mux.HandleFunc("/catalog/search", s.auth(s.limit(s.catalogSearch)))
+	mux.HandleFunc("/catalog/price", s.auth(s.limit(s.catalogUpdatePrice)))
+	mux.HandleFunc("/catalog/bulk", s.auth(s.limit(s.catalogBulkGet)))
+	// order operations
+	mux.HandleFunc("/orders", s.auth(s.limit(s.ordersHandler)))
+	mux.HandleFunc("/orders/cancel", s.auth(s.limit(s.ordersCancel)))
+	mux.HandleFunc("/orders/status", s.auth(s.limit(s.ordersStatus)))
+	mux.HandleFunc("/orders/calculate", s.auth(s.limit(s.ordersCalculate)))
+	mux.HandleFunc("/orders/bulk", s.auth(s.limit(s.ordersBulk)))
+	// notification operations
+	mux.HandleFunc("/notifications/email", s.auth(s.limit(s.notificationEmail)))
+	mux.HandleFunc("/notifications/order-confirmation", s.auth(s.limit(s.notificationOrderConfirm)))
+	mux.HandleFunc("/notifications/stock-alert", s.auth(s.limit(s.notificationStockAlert)))
 	return s.instrument(mux)
 }
 
@@ -491,6 +506,48 @@ func extractBearerToken(header string) (string, error) {
 
 func statusText(code int) string {
 	return http.StatusText(code)
+}
+
+// Catalog handlers
+func (s *Server) catalogHandler(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "catalog service not yet proxied"})
+}
+func (s *Server) catalogSearch(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "catalog search not yet proxied"})
+}
+func (s *Server) catalogUpdatePrice(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "catalog price update not yet proxied"})
+}
+func (s *Server) catalogBulkGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "catalog bulk get not yet proxied"})
+}
+
+// Order handlers
+func (s *Server) ordersHandler(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order service not yet proxied"})
+}
+func (s *Server) ordersCancel(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order cancel not yet proxied"})
+}
+func (s *Server) ordersStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order status not yet proxied"})
+}
+func (s *Server) ordersCalculate(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order calculate not yet proxied"})
+}
+func (s *Server) ordersBulk(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order bulk get not yet proxied"})
+}
+
+// Notification handlers
+func (s *Server) notificationEmail(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "email notification not yet proxied"})
+}
+func (s *Server) notificationOrderConfirm(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order confirmation not yet proxied"})
+}
+func (s *Server) notificationStockAlert(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "stock alert not yet proxied"})
 }
 
 type responseWriter struct {
