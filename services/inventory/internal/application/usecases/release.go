@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"omnichannel/inventory/internal/domain"
-	"omnichannel/inventory/internal/domain/entities"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
 
 // ReleaseService releases reservations for an order

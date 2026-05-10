@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
-	"omnichannel/inventory/internal/domain/entities"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
 
 type PostgresRepo struct{ db *sql.DB }

@@ -2,9 +2,9 @@ package grpc
 
 import (
 	"context"
-	"omnichannel/catalog/internal/application/usecases"
-	"omnichannel/catalog/internal/domain"
-	pb "omnichannel/proto/catalog"
+	"github.com/cmpnion/adp-final/services/catalog/internal/application/usecases"
+	"github.com/cmpnion/adp-final/services/catalog/internal/domain"
+	pb "github.com/cmpnion/adp-final/proto/catalog"
 )
 
 type Server struct {

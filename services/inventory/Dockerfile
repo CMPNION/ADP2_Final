@@ -4,7 +4,7 @@ COPY proto ./proto
 COPY services/inventory ./services/inventory
 WORKDIR /src/services/inventory
 RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/inventory ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -o /bin/inventory ./cmd
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl && addgroup -S app && adduser -S app -G app

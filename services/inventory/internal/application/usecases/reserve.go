@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"omnichannel/inventory/internal/domain"
-	"omnichannel/inventory/internal/domain/entities"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
 
 type Locker interface {

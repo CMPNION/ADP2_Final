@@ -4,7 +4,7 @@ COPY proto ./proto
 COPY services/catalog-service ./services/catalog-service
 WORKDIR /src/services/catalog-service
 RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/catalog ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -o /bin/catalog ./cmd
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl && addgroup -S app && adduser -S app -G app

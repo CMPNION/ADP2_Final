@@ -1,10 +1,10 @@
 FROM golang:1.25-alpine AS builder
+RUN apk add --no-cache git
 WORKDIR /src
 COPY proto ./proto
 COPY services/notification-service ./services/notification-service
 WORKDIR /src/services/notification-service
-RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/notification ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -o /bin/notification ./cmd
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl && addgroup -S app && adduser -S app -G app

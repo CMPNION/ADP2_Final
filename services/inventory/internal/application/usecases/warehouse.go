@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"omnichannel/inventory/internal/domain/entities"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
 
 func (s *ReserveService) CreateWarehouse(ctx context.Context, name string, location string) (string, error) {

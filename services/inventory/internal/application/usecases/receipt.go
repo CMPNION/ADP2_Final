@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"omnichannel/inventory/internal/domain/entities"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
 
 func (s *ReserveService) AddStockReceipt(ctx context.Context, sku string, warehouseID string, qty int64, receiptID string) error {

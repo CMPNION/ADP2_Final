@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
-	"omnichannel/inventory/internal/application/usecases"
-	"omnichannel/inventory/internal/domain"
-	pb "omnichannel/proto/inventory"
+	"github.com/cmpnion/adp-final/services/inventory/internal/application/usecases"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain"
+	pb "github.com/cmpnion/adp-final/proto/inventory"
 )
 
 type Server struct {

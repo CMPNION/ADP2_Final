@@ -18,7 +18,10 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
-	invpb "omnichannel/proto/inventory"
+	invpb "github.com/cmpnion/adp-final/proto/inventory"
+	catpb "github.com/cmpnion/adp-final/proto/catalog"
+	ordpb "github.com/cmpnion/adp-final/proto/order"
+	notpb "github.com/cmpnion/adp-final/proto/notification"
 )
 
 type contextKey string
@@ -53,8 +56,10 @@ func ensureMetricsRegistered() {
 type Server struct {
 	cfg     Config
 	inv     invpb.InventoryServiceClient
+	cat     catpb.CatalogServiceClient
+	ord     ordpb.OrderServiceClient
+	not     notpb.NotificationServiceClient
 	limiter *rate.Limiter
-	// simple in-memory demo users store
 	usersMu sync.RWMutex
 	users   map[string]demoUser
 }
@@ -65,11 +70,14 @@ type demoUser struct {
 	Role         string
 }
 
-func NewServer(cfg Config, conn *grpc.ClientConn) *Server {
+func NewServer(cfg Config, invConn, catConn, ordConn, notConn *grpc.ClientConn) *Server {
 	ensureMetricsRegistered()
 	return &Server{
 		cfg:     cfg,
-		inv:     invpb.NewInventoryServiceClient(conn),
+		inv:     invpb.NewInventoryServiceClient(invConn),
+		cat:     catpb.NewCatalogServiceClient(catConn),
+		ord:     ordpb.NewOrderServiceClient(ordConn),
+		not:     notpb.NewNotificationServiceClient(notConn),
 		limiter: rate.NewLimiter(rate.Every(time.Minute/time.Duration(cfg.RateLimitPerMinute)), cfg.RateLimitPerMinute),
 		users:   make(map[string]demoUser),
 	}
@@ -541,13 +549,49 @@ func (s *Server) ordersBulk(w http.ResponseWriter, r *http.Request) {
 
 // Notification handlers
 func (s *Server) notificationEmail(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "email notification not yet proxied"})
+	var req struct{ To, Subject, Body string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.not.SendEmail(ctx, &notpb.SendEmailRequest{To: req.To, Subject: req.Subject, Body: req.Body})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 func (s *Server) notificationOrderConfirm(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order confirmation not yet proxied"})
+	var req struct{ To, OrderId string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.not.SendOrderConfirmation(ctx, &notpb.SendOrderConfirmationRequest{To: req.To, OrderId: req.OrderId})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 func (s *Server) notificationStockAlert(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "stock alert not yet proxied"})
+	var req struct{ To, Sku, Body string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.not.SendStockAlert(ctx, &notpb.SendStockAlertRequest{To: req.To, Sku: req.Sku, Body: req.Body})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type responseWriter struct {

@@ -1,15 +1,13 @@
-module omnichannel/notification
+module github.com/cmpnion/adp-final/services/notification
 
 go 1.25.0
 
-require github.com/nats-io/nats.go v1.51.0
-
 require (
-	github.com/klauspost/compress v1.18.5 // indirect
-	github.com/nats-io/nkeys v0.4.15 // indirect
-	github.com/nats-io/nuid v1.0.1 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+github.com/mailgun/mailgun-go/v4 v4.14.0
+github.com/nats-io/nats.go v1.51.0
+google.golang.org/grpc v1.53.0
+google.golang.org/protobuf v1.36.8
+github.com/cmpnion/adp-final/proto v0.0.0
 )
 
-replace omnichannel/proto => ../../proto
+replace github.com/cmpnion/adp-final/proto => ../../proto

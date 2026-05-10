@@ -17,14 +17,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"net"
-	"omnichannel/inventory/internal/application/usecases"
-	grpcsrv "omnichannel/inventory/internal/delivery/grpc"
-	natsinfra "omnichannel/inventory/internal/infra/nats"
-	"omnichannel/inventory/internal/infra/postgres"
-	redisinfra "omnichannel/inventory/internal/infra/redis"
-	"omnichannel/inventory/internal/observability"
-	evpb "omnichannel/proto/events"
-	invpb "omnichannel/proto/inventory"
+	"github.com/cmpnion/adp-final/services/inventory/internal/application/usecases"
+	grpcsrv "github.com/cmpnion/adp-final/services/inventory/internal/delivery/grpc"
+	natsinfra "github.com/cmpnion/adp-final/services/inventory/internal/infra/nats"
+	"github.com/cmpnion/adp-final/services/inventory/internal/infra/postgres"
+	redisinfra "github.com/cmpnion/adp-final/services/inventory/internal/infra/redis"
+	"github.com/cmpnion/adp-final/services/inventory/internal/observability"
+	evpb "github.com/cmpnion/adp-final/proto/events"
+	invpb "github.com/cmpnion/adp-final/proto/inventory"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
-	"omnichannel/order/internal/domain"
+	"github.com/cmpnion/adp-final/services/order/internal/domain"
 )
 
 type Repo interface {

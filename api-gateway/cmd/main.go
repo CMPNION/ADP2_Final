@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"omnichannel/apigateway/internal/app"
+	"github.com/cmpnion/adp-final/apigateway/internal/app"
 )
 
 func main() {
@@ -23,13 +23,29 @@ func main() {
 	if cfg.JWTSecret == "" && cfg.AuthToken == "" {
 		log.Fatal("missing JWT_SECRET or AUTH_TOKEN")
 	}
-	conn, err := grpc.DialContext(ctx, cfg.InventoryGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	
+	invConn, err := grpc.DialContext(ctx, cfg.InventoryGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	if err != nil {
 		log.Fatalf("inventory dial: %v", err)
 	}
-	defer conn.Close()
+	defer invConn.Close()
 
-	srv := app.NewServer(cfg, conn)
+	catConn, err := grpc.DialContext(ctx, "catalog-service:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Printf("catalog dial warn (not critical): %v", err)
+	}
+	
+	ordConn, err := grpc.DialContext(ctx, "order-service:50053", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Printf("order dial warn (not critical): %v", err)
+	}
+	
+	notConn, err := grpc.DialContext(ctx, "notification-service:50054", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Printf("notification dial warn (not critical): %v", err)
+	}
+
+	srv := app.NewServer(cfg, invConn, catConn, ordConn, notConn)
 	httpServer := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           srv.Router(),

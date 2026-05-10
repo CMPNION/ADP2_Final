@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/nats-io/nats.go"
-	"omnichannel/catalog/internal/domain"
+	"github.com/cmpnion/adp-final/services/catalog/internal/domain"
 )
 
 type Repo interface {

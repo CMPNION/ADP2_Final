@@ -4,7 +4,7 @@ COPY proto ./proto
 COPY api-gateway ./api-gateway
 WORKDIR /src/api-gateway
 RUN go mod download && go mod tidy
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/gateway ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -o /bin/gateway ./cmd
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates curl && addgroup -S app && adduser -S app -G app

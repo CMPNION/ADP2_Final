@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"omnichannel/inventory/internal/domain/entities"
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
 
 // Repository defines persistence operations required by usecases
