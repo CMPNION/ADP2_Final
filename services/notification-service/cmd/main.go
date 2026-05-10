@@ -19,8 +19,12 @@ type notificationServer struct {
 }
 
 func (s *notificationServer) SendEmail(ctx context.Context, req *pb.SendEmailRequest) (*pb.SendEmailResponse, error) {
+	from := os.Getenv("MAILGUN_FROM_EMAIL")
+	if from == "" {
+		from = "norkindima57@gmail.com"
+	}
 	m := s.mg.NewMessage(
-		"Notification Service <postmaster@"+os.Getenv("MAILGUN_DOMAIN")+">",
+		from,
 		req.Subject,
 		req.Body,
 		req.To,
@@ -33,9 +37,12 @@ func (s *notificationServer) SendEmail(ctx context.Context, req *pb.SendEmailReq
 }
 
 func (s *notificationServer) SendOrderConfirmation(ctx context.Context, req *pb.SendOrderConfirmationRequest) (*pb.SendOrderConfirmationResponse, error) {
-	// Get fields from request - use proto message reflection
+	from := os.Getenv("MAILGUN_FROM_EMAIL")
+	if from == "" {
+		from = "norkindima57@gmail.com"
+	}
 	m := s.mg.NewMessage(
-		"Notification Service <postmaster@"+os.Getenv("MAILGUN_DOMAIN")+">",
+		from,
 		"Order Confirmation",
 		"Order confirmation email",
 		"customer@example.com",
@@ -48,8 +55,12 @@ func (s *notificationServer) SendOrderConfirmation(ctx context.Context, req *pb.
 }
 
 func (s *notificationServer) SendStockAlert(ctx context.Context, req *pb.SendStockAlertRequest) (*pb.SendStockAlertResponse, error) {
+	from := os.Getenv("MAILGUN_FROM_EMAIL")
+	if from == "" {
+		from = "norkindima57@gmail.com"
+	}
 	m := s.mg.NewMessage(
-		"Notification Service <postmaster@"+os.Getenv("MAILGUN_DOMAIN")+">",
+		from,
 		"Stock Alert",
 		"Stock alert email",
 		"admin@inventory.local",

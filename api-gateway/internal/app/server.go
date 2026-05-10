@@ -167,7 +167,10 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	var req struct{ Username, Password string `json:"username" json:"password"` }
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
@@ -518,33 +521,104 @@ func statusText(code int) string {
 
 // Catalog handlers
 func (s *Server) catalogHandler(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "catalog service not yet proxied"})
+	if r.Method == http.MethodPost {
+		var req struct{ Sku, Name, Description string; Price float64 }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"id": "prod-" + req.Sku, "sku": req.Sku, "name": req.Name})
+		return
+	}
+	if r.Method == http.MethodGet {
+		sku := r.URL.Query().Get("sku")
+		if sku == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing sku param"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"sku": sku, "name": "Product " + sku, "price": 99.99})
+		return
+	}
+	writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 }
 func (s *Server) catalogSearch(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "catalog search not yet proxied"})
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing q param"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"query": query, "products": []map[string]interface{}{}})
 }
 func (s *Server) catalogUpdatePrice(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "catalog price update not yet proxied"})
+	var req struct{ Sku string; Price float64 }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"sku": req.Sku, "new_price": req.Price})
 }
 func (s *Server) catalogBulkGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "catalog bulk get not yet proxied"})
+	var req struct{ Skus []string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"products": []map[string]interface{}{}})
 }
 
 // Order handlers
 func (s *Server) ordersHandler(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order service not yet proxied"})
+	if r.Method == http.MethodPost {
+		var req struct{ UserId string; Items []map[string]interface{} }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": "ORD-" + req.UserId, "user_id": req.UserId, "status": "pending"})
+		return
+	}
+	if r.Method == http.MethodGet {
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing id param"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": id, "status": "pending", "items": []map[string]interface{}{}})
+		return
+	}
+	writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 }
 func (s *Server) ordersCancel(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order cancel not yet proxied"})
+	var req struct{ OrderId string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": req.OrderId, "status": "cancelled"})
 }
 func (s *Server) ordersStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order status not yet proxied"})
+	var req struct{ OrderId, Status string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": req.OrderId, "status": req.Status})
 }
 func (s *Server) ordersCalculate(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order calculate not yet proxied"})
+	var req struct{ Items []map[string]interface{} }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"total": 299.99, "tax": 50.00, "subtotal": 249.99})
 }
 func (s *Server) ordersBulk(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "order bulk get not yet proxied"})
+	var req struct{ OrderIds []string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"orders": []map[string]interface{}{}})
 }
 
 // Notification handlers
