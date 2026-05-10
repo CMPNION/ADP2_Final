@@ -80,11 +80,11 @@ func main() {
 
 	apiKey := os.Getenv("MAILGUN_API_KEY")
 	if apiKey == "" {
-		apiKey = "YOUR_MAILGUN_API_KEY"
+		log.Println("warning: MAILGUN_API_KEY not set, email notifications will fail")
 	}
 	domain := os.Getenv("MAILGUN_DOMAIN")
 	if domain == "" {
-		domain = "sandboxd092d35ef5604a8596c7328e378e3be0.mailgun.org"
+		log.Println("warning: MAILGUN_DOMAIN not set, email notifications will fail")
 	}
 
 	mg := mailgun.NewMailgun(domain, apiKey)
