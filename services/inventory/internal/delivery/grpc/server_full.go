@@ -53,7 +53,6 @@ func (s *Server) ConfirmStockDeduction(ctx context.Context, req *pb.ConfirmStock
 	return &pb.ConfirmStockDeductionResponse{Success: true}, nil
 }
 
-// The rest of gRPC methods can delegate to other usecases or repo; provide minimal implementations
 func (s *Server) GetStockBySKU(ctx context.Context, req *pb.GetStockBySKURequest) (*pb.GetStockBySKUResponse, error) {
 	stocks, err := s.repo.ListStocksBySKU(ctx, req.GetSku())
 	if err != nil {

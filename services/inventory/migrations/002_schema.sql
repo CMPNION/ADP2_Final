@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS product_stocks (
   safety_stock_level BIGINT NOT NULL DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-  UNIQUE (sku, warehouse_id)
+  UNIQUE (sku, warehouse_id),
+  CHECK (total_qty >= 0),
+  CHECK (reserved_qty >= 0),
+  CHECK (reserved_qty <= total_qty)
 );
 
 CREATE TABLE IF NOT EXISTS stock_reservations (
@@ -28,17 +31,19 @@ CREATE TABLE IF NOT EXISTS stock_reservations (
   quantity BIGINT NOT NULL,
   status TEXT NOT NULL,
   expires_at TIMESTAMP WITH TIME ZONE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  CHECK (quantity > 0)
 );
 
 CREATE TABLE IF NOT EXISTS stock_movements (
   id UUID PRIMARY KEY,
   sku TEXT NOT NULL,
-  warehouse_id UUID NOT NULL,
+  warehouse_id UUID NOT NULL REFERENCES warehouses(id),
   type TEXT NOT NULL,
   quantity BIGINT NOT NULL,
   reference_id TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  CHECK (quantity > 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_product_stocks_sku ON product_stocks(sku);

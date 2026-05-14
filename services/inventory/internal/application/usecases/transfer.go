@@ -4,14 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
+	"github.com/google/uuid"
 )
 
 // Transfer stock between warehouses
 func (s *ReserveService) TransferStock(ctx context.Context, sku string, from string, to string, qty int64, referenceID string) error {
+	if strings.TrimSpace(sku) == "" {
+		return fmt.Errorf("sku is required")
+	}
+	if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+		return fmt.Errorf("from and to warehouses are required")
+	}
+	sku = strings.TrimSpace(sku)
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	if from == to {
+		return fmt.Errorf("from and to warehouses must differ")
+	}
+	if qty <= 0 {
+		return fmt.Errorf("quantity must be greater than zero")
+	}
+	if ok, err := s.warehouseExists(ctx, to); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("destination warehouse not found")
+	}
 	// Lock both source and destination
 	keys := []string{fmt.Sprintf("lock:stock:%s:%s", sku, from), fmt.Sprintf("lock:stock:%s:%s", sku, to)}
 	acquired := []string{}
@@ -72,8 +93,8 @@ func (s *ReserveService) TransferStock(ctx context.Context, sku string, from str
 	}
 
 	// ledger entries
-	outMov := &entities.StockMovement{ID: uuid.New().String(), SKU: sku, WarehouseID: from, Type: entities.Transfer, Quantity: -qty, ReferenceID: referenceID, CreatedAt: time.Now()}
-	inMov := &entities.StockMovement{ID: uuid.New().String(), SKU: sku, WarehouseID: to, Type: entities.Transfer, Quantity: qty, ReferenceID: referenceID, CreatedAt: time.Now()}
+	outMov := &entities.StockMovement{ID: uuid.New().String(), SKU: sku, WarehouseID: from, Type: entities.TransferOut, Quantity: qty, ReferenceID: referenceID, CreatedAt: time.Now()}
+	inMov := &entities.StockMovement{ID: uuid.New().String(), SKU: sku, WarehouseID: to, Type: entities.TransferIn, Quantity: qty, ReferenceID: referenceID, CreatedAt: time.Now()}
 	if err := s.repo.CreateMovement(ctx, tx, outMov); err != nil {
 		return err
 	}

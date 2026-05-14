@@ -11,23 +11,26 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-	_ "github.com/lib/pq"
-	"github.com/nats-io/nats.go"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"google.golang.org/grpc"
-	"net"
+	evpb "github.com/cmpnion/adp-final/proto/events"
+	invpb "github.com/cmpnion/adp-final/proto/inventory"
 	"github.com/cmpnion/adp-final/services/inventory/internal/application/usecases"
 	grpcsrv "github.com/cmpnion/adp-final/services/inventory/internal/delivery/grpc"
 	natsinfra "github.com/cmpnion/adp-final/services/inventory/internal/infra/nats"
 	"github.com/cmpnion/adp-final/services/inventory/internal/infra/postgres"
 	redisinfra "github.com/cmpnion/adp-final/services/inventory/internal/infra/redis"
 	"github.com/cmpnion/adp-final/services/inventory/internal/observability"
-	evpb "github.com/cmpnion/adp-final/proto/events"
-	invpb "github.com/cmpnion/adp-final/proto/inventory"
+	"github.com/go-redis/redis/v8"
+	_ "github.com/lib/pq"
+	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc"
+	"net"
 )
 
 func main() {
+	ctxShutdown, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	dbURL := os.Getenv("DATABASE_URL")
 	natsURL := os.Getenv("NATS_URL")
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -77,6 +80,26 @@ func main() {
 	reserveUC := usecases.NewReserveService(repo, locker, cache, natsPub)
 	releaseUC := usecases.NewReleaseService(repo, locker, cache, natsPub)
 	confirmUC := usecases.NewConfirmService(repo, locker, cache, natsPub)
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctxShutdown.Done():
+				return
+			case <-ticker.C:
+				removed, err := reserveUC.CleanupExpiredReservations(context.Background())
+				if err != nil {
+					log.Printf("expired reservations cleanup: %v", err)
+					continue
+				}
+				if removed > 0 {
+					log.Printf("expired reservations cleaned up: %d", removed)
+				}
+			}
+		}
+	}()
 
 	observability.EnsureRegistered()
 
@@ -164,7 +187,6 @@ func main() {
 	}()
 
 	// graceful shutdown
-	ctxShutdown, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	<-ctxShutdown.Done()
 	log.Println("shutting down")
 	s.GracefulStop()
@@ -172,5 +194,4 @@ func main() {
 	defer cancelShutdown()
 	_ = metricsSrv.Shutdown(shutdownCtx)
 	natsPub.Close()
-	stop()
 }

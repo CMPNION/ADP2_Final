@@ -4,15 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
+	"github.com/google/uuid"
 )
 
 func (s *ReserveService) AddStockReceipt(ctx context.Context, sku string, warehouseID string, qty int64, receiptID string) error {
+	if strings.TrimSpace(sku) == "" {
+		return fmt.Errorf("sku is required")
+	}
+	if strings.TrimSpace(warehouseID) == "" {
+		return fmt.Errorf("warehouse id is required")
+	}
+	sku = strings.TrimSpace(sku)
+	warehouseID = strings.TrimSpace(warehouseID)
 	if qty <= 0 {
-		return fmt.Errorf("invalid qty")
+		return fmt.Errorf("quantity must be greater than zero")
+	}
+	if ok, err := s.warehouseExists(ctx, warehouseID); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("warehouse not found")
 	}
 	key := fmt.Sprintf("lock:stock:%s:%s", sku, warehouseID)
 	ok, err := s.locker.Lock(ctx, key, 8*time.Second)

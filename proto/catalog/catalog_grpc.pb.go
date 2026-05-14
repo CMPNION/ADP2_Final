@@ -19,11 +19,18 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	CatalogService_CreateProduct_FullMethodName   = "/catalog.CatalogService/CreateProduct"
-	CatalogService_GetProduct_FullMethodName      = "/catalog.CatalogService/GetProduct"
-	CatalogService_SearchProducts_FullMethodName  = "/catalog.CatalogService/SearchProducts"
-	CatalogService_UpdatePrice_FullMethodName     = "/catalog.CatalogService/UpdatePrice"
-	CatalogService_BulkGetProducts_FullMethodName = "/catalog.CatalogService/BulkGetProducts"
+	CatalogService_CreateProduct_FullMethodName           = "/catalog.CatalogService/CreateProduct"
+	CatalogService_GetProduct_FullMethodName              = "/catalog.CatalogService/GetProduct"
+	CatalogService_SearchProducts_FullMethodName          = "/catalog.CatalogService/SearchProducts"
+	CatalogService_UpdatePrice_FullMethodName             = "/catalog.CatalogService/UpdatePrice"
+	CatalogService_BulkGetProducts_FullMethodName         = "/catalog.CatalogService/BulkGetProducts"
+	CatalogService_DeleteProduct_FullMethodName           = "/catalog.CatalogService/DeleteProduct"
+	CatalogService_ListProducts_FullMethodName            = "/catalog.CatalogService/ListProducts"
+	CatalogService_UpsertProduct_FullMethodName           = "/catalog.CatalogService/UpsertProduct"
+	CatalogService_BatchUpdatePrice_FullMethodName        = "/catalog.CatalogService/BatchUpdatePrice"
+	CatalogService_GetProductsByPriceRange_FullMethodName = "/catalog.CatalogService/GetProductsByPriceRange"
+	CatalogService_AdjustPriceByPercent_FullMethodName    = "/catalog.CatalogService/AdjustPriceByPercent"
+	CatalogService_GetCatalogStats_FullMethodName         = "/catalog.CatalogService/GetCatalogStats"
 )
 
 // CatalogServiceClient is the client API for CatalogService service.
@@ -35,6 +42,13 @@ type CatalogServiceClient interface {
 	SearchProducts(ctx context.Context, in *SearchProductsRequest, opts ...grpc.CallOption) (*SearchProductsResponse, error)
 	UpdatePrice(ctx context.Context, in *UpdatePriceRequest, opts ...grpc.CallOption) (*UpdatePriceResponse, error)
 	BulkGetProducts(ctx context.Context, in *BulkGetProductsRequest, opts ...grpc.CallOption) (*BulkGetProductsResponse, error)
+	DeleteProduct(ctx context.Context, in *DeleteProductRequest, opts ...grpc.CallOption) (*DeleteProductResponse, error)
+	ListProducts(ctx context.Context, in *ListProductsRequest, opts ...grpc.CallOption) (*ListProductsResponse, error)
+	UpsertProduct(ctx context.Context, in *UpsertProductRequest, opts ...grpc.CallOption) (*UpsertProductResponse, error)
+	BatchUpdatePrice(ctx context.Context, in *BatchUpdatePriceRequest, opts ...grpc.CallOption) (*BatchUpdatePriceResponse, error)
+	GetProductsByPriceRange(ctx context.Context, in *GetProductsByPriceRangeRequest, opts ...grpc.CallOption) (*GetProductsByPriceRangeResponse, error)
+	AdjustPriceByPercent(ctx context.Context, in *AdjustPriceByPercentRequest, opts ...grpc.CallOption) (*AdjustPriceByPercentResponse, error)
+	GetCatalogStats(ctx context.Context, in *GetCatalogStatsRequest, opts ...grpc.CallOption) (*GetCatalogStatsResponse, error)
 }
 
 type catalogServiceClient struct {
@@ -90,6 +104,69 @@ func (c *catalogServiceClient) BulkGetProducts(ctx context.Context, in *BulkGetP
 	return out, nil
 }
 
+func (c *catalogServiceClient) DeleteProduct(ctx context.Context, in *DeleteProductRequest, opts ...grpc.CallOption) (*DeleteProductResponse, error) {
+	out := new(DeleteProductResponse)
+	err := c.cc.Invoke(ctx, CatalogService_DeleteProduct_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) ListProducts(ctx context.Context, in *ListProductsRequest, opts ...grpc.CallOption) (*ListProductsResponse, error) {
+	out := new(ListProductsResponse)
+	err := c.cc.Invoke(ctx, CatalogService_ListProducts_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) UpsertProduct(ctx context.Context, in *UpsertProductRequest, opts ...grpc.CallOption) (*UpsertProductResponse, error) {
+	out := new(UpsertProductResponse)
+	err := c.cc.Invoke(ctx, CatalogService_UpsertProduct_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) BatchUpdatePrice(ctx context.Context, in *BatchUpdatePriceRequest, opts ...grpc.CallOption) (*BatchUpdatePriceResponse, error) {
+	out := new(BatchUpdatePriceResponse)
+	err := c.cc.Invoke(ctx, CatalogService_BatchUpdatePrice_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) GetProductsByPriceRange(ctx context.Context, in *GetProductsByPriceRangeRequest, opts ...grpc.CallOption) (*GetProductsByPriceRangeResponse, error) {
+	out := new(GetProductsByPriceRangeResponse)
+	err := c.cc.Invoke(ctx, CatalogService_GetProductsByPriceRange_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) AdjustPriceByPercent(ctx context.Context, in *AdjustPriceByPercentRequest, opts ...grpc.CallOption) (*AdjustPriceByPercentResponse, error) {
+	out := new(AdjustPriceByPercentResponse)
+	err := c.cc.Invoke(ctx, CatalogService_AdjustPriceByPercent_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *catalogServiceClient) GetCatalogStats(ctx context.Context, in *GetCatalogStatsRequest, opts ...grpc.CallOption) (*GetCatalogStatsResponse, error) {
+	out := new(GetCatalogStatsResponse)
+	err := c.cc.Invoke(ctx, CatalogService_GetCatalogStats_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CatalogServiceServer is the server API for CatalogService service.
 // All implementations must embed UnimplementedCatalogServiceServer
 // for forward compatibility
@@ -99,6 +176,13 @@ type CatalogServiceServer interface {
 	SearchProducts(context.Context, *SearchProductsRequest) (*SearchProductsResponse, error)
 	UpdatePrice(context.Context, *UpdatePriceRequest) (*UpdatePriceResponse, error)
 	BulkGetProducts(context.Context, *BulkGetProductsRequest) (*BulkGetProductsResponse, error)
+	DeleteProduct(context.Context, *DeleteProductRequest) (*DeleteProductResponse, error)
+	ListProducts(context.Context, *ListProductsRequest) (*ListProductsResponse, error)
+	UpsertProduct(context.Context, *UpsertProductRequest) (*UpsertProductResponse, error)
+	BatchUpdatePrice(context.Context, *BatchUpdatePriceRequest) (*BatchUpdatePriceResponse, error)
+	GetProductsByPriceRange(context.Context, *GetProductsByPriceRangeRequest) (*GetProductsByPriceRangeResponse, error)
+	AdjustPriceByPercent(context.Context, *AdjustPriceByPercentRequest) (*AdjustPriceByPercentResponse, error)
+	GetCatalogStats(context.Context, *GetCatalogStatsRequest) (*GetCatalogStatsResponse, error)
 	mustEmbedUnimplementedCatalogServiceServer()
 }
 
@@ -120,6 +204,27 @@ func (UnimplementedCatalogServiceServer) UpdatePrice(context.Context, *UpdatePri
 }
 func (UnimplementedCatalogServiceServer) BulkGetProducts(context.Context, *BulkGetProductsRequest) (*BulkGetProductsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BulkGetProducts not implemented")
+}
+func (UnimplementedCatalogServiceServer) DeleteProduct(context.Context, *DeleteProductRequest) (*DeleteProductResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteProduct not implemented")
+}
+func (UnimplementedCatalogServiceServer) ListProducts(context.Context, *ListProductsRequest) (*ListProductsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListProducts not implemented")
+}
+func (UnimplementedCatalogServiceServer) UpsertProduct(context.Context, *UpsertProductRequest) (*UpsertProductResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpsertProduct not implemented")
+}
+func (UnimplementedCatalogServiceServer) BatchUpdatePrice(context.Context, *BatchUpdatePriceRequest) (*BatchUpdatePriceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BatchUpdatePrice not implemented")
+}
+func (UnimplementedCatalogServiceServer) GetProductsByPriceRange(context.Context, *GetProductsByPriceRangeRequest) (*GetProductsByPriceRangeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetProductsByPriceRange not implemented")
+}
+func (UnimplementedCatalogServiceServer) AdjustPriceByPercent(context.Context, *AdjustPriceByPercentRequest) (*AdjustPriceByPercentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AdjustPriceByPercent not implemented")
+}
+func (UnimplementedCatalogServiceServer) GetCatalogStats(context.Context, *GetCatalogStatsRequest) (*GetCatalogStatsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetCatalogStats not implemented")
 }
 func (UnimplementedCatalogServiceServer) mustEmbedUnimplementedCatalogServiceServer() {}
 
@@ -224,6 +329,132 @@ func _CatalogService_BulkGetProducts_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CatalogService_DeleteProduct_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteProductRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).DeleteProduct(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_DeleteProduct_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).DeleteProduct(ctx, req.(*DeleteProductRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_ListProducts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListProductsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).ListProducts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_ListProducts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).ListProducts(ctx, req.(*ListProductsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_UpsertProduct_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpsertProductRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).UpsertProduct(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_UpsertProduct_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).UpsertProduct(ctx, req.(*UpsertProductRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_BatchUpdatePrice_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchUpdatePriceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).BatchUpdatePrice(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_BatchUpdatePrice_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).BatchUpdatePrice(ctx, req.(*BatchUpdatePriceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_GetProductsByPriceRange_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProductsByPriceRangeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).GetProductsByPriceRange(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_GetProductsByPriceRange_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).GetProductsByPriceRange(ctx, req.(*GetProductsByPriceRangeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_AdjustPriceByPercent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdjustPriceByPercentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).AdjustPriceByPercent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_AdjustPriceByPercent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).AdjustPriceByPercent(ctx, req.(*AdjustPriceByPercentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CatalogService_GetCatalogStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCatalogStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).GetCatalogStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_GetCatalogStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).GetCatalogStats(ctx, req.(*GetCatalogStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CatalogService_ServiceDesc is the grpc.ServiceDesc for CatalogService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -250,6 +481,34 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BulkGetProducts",
 			Handler:    _CatalogService_BulkGetProducts_Handler,
+		},
+		{
+			MethodName: "DeleteProduct",
+			Handler:    _CatalogService_DeleteProduct_Handler,
+		},
+		{
+			MethodName: "ListProducts",
+			Handler:    _CatalogService_ListProducts_Handler,
+		},
+		{
+			MethodName: "UpsertProduct",
+			Handler:    _CatalogService_UpsertProduct_Handler,
+		},
+		{
+			MethodName: "BatchUpdatePrice",
+			Handler:    _CatalogService_BatchUpdatePrice_Handler,
+		},
+		{
+			MethodName: "GetProductsByPriceRange",
+			Handler:    _CatalogService_GetProductsByPriceRange_Handler,
+		},
+		{
+			MethodName: "AdjustPriceByPercent",
+			Handler:    _CatalogService_AdjustPriceByPercent_Handler,
+		},
+		{
+			MethodName: "GetCatalogStats",
+			Handler:    _CatalogService_GetCatalogStats_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

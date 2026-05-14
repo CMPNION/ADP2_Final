@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
-	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
 
 type PostgresRepo struct{ db *sql.DB }
@@ -83,9 +83,59 @@ func (r *PostgresRepo) GetReservationByOrder(ctx context.Context, tx *sql.Tx, or
 	return out, nil
 }
 
+func (r *PostgresRepo) ListExpiredReservations(ctx context.Context, tx *sql.Tx, before time.Time) ([]*entities.StockReservation, error) {
+	q := `SELECT id, order_id, sku, warehouse_id, quantity, status, expires_at, created_at
+	      FROM stock_reservations
+	      WHERE expires_at IS NOT NULL
+	        AND expires_at <= $1
+	        AND status = $2
+	      ORDER BY order_id, id
+	      FOR UPDATE SKIP LOCKED`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if tx != nil {
+		rows, err = tx.QueryContext(ctx, q, before, string(entities.Reserved))
+	} else {
+		rows, err = r.db.QueryContext(ctx, q, before, string(entities.Reserved))
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*entities.StockReservation{}
+	for rows.Next() {
+		var rr entities.StockReservation
+		var status string
+		if err := rows.Scan(&rr.ID, &rr.OrderID, &rr.SKU, &rr.WarehouseID, &rr.Quantity, &status, &rr.ExpiresAt, &rr.CreatedAt); err != nil {
+			return nil, err
+		}
+		rr.Status = entities.ReservationStatus(status)
+		out = append(out, &rr)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepo) DeleteReservation(ctx context.Context, tx *sql.Tx, reservationID string) error {
+	q := `DELETE FROM stock_reservations WHERE id=$1`
+	if tx != nil {
+		_, err := tx.ExecContext(ctx, q, reservationID)
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, q, reservationID)
+	return err
+}
+
 func (r *PostgresRepo) UpdateReservationStatus(ctx context.Context, tx *sql.Tx, reservationID string, status string) error {
 	q := `UPDATE stock_reservations SET status=$1 WHERE id=$2`
 	_, err := tx.ExecContext(ctx, q, status, reservationID)
+	return err
+}
+
+func (r *PostgresRepo) UpdateReservationQuantity(ctx context.Context, tx *sql.Tx, reservationID string, newQty int64) error {
+	q := `UPDATE stock_reservations SET quantity=$1 WHERE id=$2`
+	_, err := tx.ExecContext(ctx, q, newQty, reservationID)
 	return err
 }
 
@@ -100,7 +150,16 @@ func (r *PostgresRepo) CreateMovement(ctx context.Context, tx *sql.Tx, m *entiti
 }
 
 func (r *PostgresRepo) GetLowStock(ctx context.Context, limit int) ([]*entities.ProductStock, error) {
-	q := `SELECT id, sku, warehouse_id, total_qty, reserved_qty, safety_stock_level, created_at, updated_at FROM product_stocks WHERE (total_qty - reserved_qty) < safety_stock_level LIMIT $1`
+	q := `SELECT id, sku, warehouse_id, total_qty, reserved_qty, safety_stock_level, created_at, updated_at
+	      FROM product_stocks
+	      WHERE sku IN (
+	          SELECT sku
+	          FROM product_stocks
+	          GROUP BY sku
+	          HAVING SUM(total_qty - reserved_qty) < 100
+	      )
+	      ORDER BY sku, warehouse_id
+	      LIMIT $1`
 	rows, err := r.db.QueryContext(ctx, q, limit)
 	if err != nil {
 		return nil, err

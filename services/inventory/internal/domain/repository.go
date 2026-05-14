@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
@@ -22,7 +23,11 @@ type Repository interface {
 
 	CreateReservation(ctx context.Context, tx *sql.Tx, r *entities.StockReservation) error
 	GetReservationByOrder(ctx context.Context, tx *sql.Tx, orderID string) ([]*entities.StockReservation, error)
+	ListExpiredReservations(ctx context.Context, tx *sql.Tx, before time.Time) ([]*entities.StockReservation, error)
+	DeleteReservation(ctx context.Context, tx *sql.Tx, reservationID string) error
 	UpdateReservationStatus(ctx context.Context, tx *sql.Tx, reservationID string, status string) error
+	// UpdateReservationQuantity sets a new quantity for a reservation. If newQty <= 0 caller should delete the reservation instead.
+	UpdateReservationQuantity(ctx context.Context, tx *sql.Tx, reservationID string, newQty int64) error
 
 	CreateMovement(ctx context.Context, tx *sql.Tx, m *entities.StockMovement) error
 

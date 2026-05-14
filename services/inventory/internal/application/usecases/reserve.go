@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/cmpnion/adp-final/services/inventory/internal/domain"
 	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
+	"github.com/google/uuid"
 )
 
 type Locker interface {
@@ -50,8 +51,23 @@ func NewReserveService(r domain.Repository, l Locker, c Cache, p Publisher) *Res
 }
 
 func (s *ReserveService) ReserveStock(ctx context.Context, orderID string, items []ItemReq) ([]ReservationResult, error) {
+	if strings.TrimSpace(orderID) == "" {
+		return nil, fmt.Errorf("order id is required")
+	}
 	if len(items) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("items are required")
+	}
+	normalized := make([]ItemReq, 0, len(items))
+	for _, item := range items {
+		item.SKU = strings.TrimSpace(item.SKU)
+		item.WarehouseID = strings.TrimSpace(item.WarehouseID)
+		if item.SKU == "" {
+			return nil, fmt.Errorf("sku is required")
+		}
+		if item.Quantity <= 0 {
+			return nil, fmt.Errorf("quantity must be greater than zero")
+		}
+		normalized = append(normalized, item)
 	}
 
 	type preparedItem struct {
@@ -60,7 +76,7 @@ func (s *ReserveService) ReserveStock(ctx context.Context, orderID string, items
 
 	prepared := make([]preparedItem, 0, len(items))
 	lockKeySet := make(map[string]struct{}, len(items))
-	for _, item := range items {
+	for _, item := range normalized {
 		lockKey := fmt.Sprintf("lock:stock:%s:%s", item.SKU, item.WarehouseID)
 		if item.WarehouseID == "" {
 			lockKey = fmt.Sprintf("lock:stock:%s:*", item.SKU)
@@ -111,16 +127,164 @@ func (s *ReserveService) ReserveStock(ctx context.Context, orderID string, items
 	now := time.Now()
 	for _, item := range prepared {
 		if prev, ok := existingBySKU[item.SKU]; ok {
-			if prev.Quantity != item.Quantity {
-				return nil, fmt.Errorf("reservation already exists for sku %s with different quantity", item.SKU)
+			if prev.Status == entities.Confirmed {
+				return nil, fmt.Errorf("reservation for sku %s is already confirmed", item.SKU)
 			}
-			results = append(results, ReservationResult{
-				ReservationID: prev.ID,
-				SKU:           prev.SKU,
-				WarehouseID:   prev.WarehouseID,
-				Quantity:      prev.Quantity,
-			})
-			continue
+			if prev.Status == entities.Released {
+				warehouseID := prev.WarehouseID
+				if item.WarehouseID != "" && item.WarehouseID != warehouseID {
+					return nil, fmt.Errorf("reservation exists for sku %s in warehouse %s; cannot reserve in %s", item.SKU, warehouseID, item.WarehouseID)
+				}
+				ps, err := s.repo.GetProductStockForUpdate(ctx, tx, prev.SKU, warehouseID)
+				if err != nil {
+					return nil, err
+				}
+				if ps == nil {
+					return nil, fmt.Errorf("stock not found for sku %s warehouse %s", prev.SKU, warehouseID)
+				}
+				if ps.AvailableQuantity() < item.Quantity {
+					return nil, fmt.Errorf("insufficient stock for sku %s warehouse %s", prev.SKU, warehouseID)
+				}
+				ps.Reserve(item.Quantity)
+				if err := s.repo.UpsertProductStock(ctx, tx, ps); err != nil {
+					return nil, err
+				}
+				if err := s.repo.DeleteReservation(ctx, tx, prev.ID); err != nil {
+					return nil, err
+				}
+				reservation := &entities.StockReservation{
+					ID:          uuid.New().String(),
+					OrderID:     orderID,
+					SKU:         prev.SKU,
+					WarehouseID: warehouseID,
+					Quantity:    item.Quantity,
+					Status:      entities.Reserved,
+					ExpiresAt:   now.Add(30 * time.Minute),
+					CreatedAt:   now,
+				}
+				if err := s.repo.CreateReservation(ctx, tx, reservation); err != nil {
+					return nil, err
+				}
+				movement := &entities.StockMovement{
+					ID:          uuid.New().String(),
+					SKU:         prev.SKU,
+					WarehouseID: warehouseID,
+					Type:        entities.Reserve,
+					Quantity:    item.Quantity,
+					ReferenceID: orderID,
+					CreatedAt:   now,
+				}
+				if err := s.repo.CreateMovement(ctx, tx, movement); err != nil {
+					return nil, err
+				}
+				results = append(results, ReservationResult{ReservationID: reservation.ID, SKU: reservation.SKU, WarehouseID: reservation.WarehouseID, Quantity: reservation.Quantity})
+				continue
+			}
+			// If reservation exists with same quantity - idempotent
+			if prev.Quantity == item.Quantity {
+				results = append(results, ReservationResult{
+					ReservationID: prev.ID,
+					SKU:           prev.SKU,
+					WarehouseID:   prev.WarehouseID,
+					Quantity:      prev.Quantity,
+				})
+				continue
+			}
+			// If warehouse differs, avoid auto-moving reservation
+			if item.WarehouseID != "" && item.WarehouseID != prev.WarehouseID {
+				return nil, fmt.Errorf("reservation exists for sku %s in warehouse %s; cannot reserve in %s", item.SKU, prev.WarehouseID, item.WarehouseID)
+			}
+			// Adjust existing reservation quantity (increase or decrease)
+			delta := item.Quantity - prev.Quantity
+			if delta > 0 {
+				// need to reserve additional qty
+				ps, err := s.repo.GetProductStockForUpdate(ctx, tx, prev.SKU, prev.WarehouseID)
+				if err != nil {
+					return nil, err
+				}
+				if ps == nil {
+					return nil, fmt.Errorf("stock not found for sku %s warehouse %s", prev.SKU, prev.WarehouseID)
+				}
+				if ps.AvailableQuantity() < delta {
+					return nil, fmt.Errorf("insufficient stock for sku %s warehouse %s", prev.SKU, prev.WarehouseID)
+				}
+				ps.Reserve(delta)
+				if err := s.repo.UpsertProductStock(ctx, tx, ps); err != nil {
+					return nil, err
+				}
+				// update reservation quantity
+				if err := s.repo.UpdateReservationQuantity(ctx, tx, prev.ID, item.Quantity); err != nil {
+					return nil, err
+				}
+				// ledger for additional reserve
+				movement := &entities.StockMovement{
+					ID:          uuid.New().String(),
+					SKU:         prev.SKU,
+					WarehouseID: prev.WarehouseID,
+					Type:        entities.Reserve,
+					Quantity:    delta,
+					ReferenceID: orderID,
+					CreatedAt:   now,
+				}
+				if err := s.repo.CreateMovement(ctx, tx, movement); err != nil {
+					return nil, err
+				}
+				results = append(results, ReservationResult{ReservationID: prev.ID, SKU: prev.SKU, WarehouseID: prev.WarehouseID, Quantity: item.Quantity})
+				continue
+			}
+			// delta < 0 -> release some qty back
+			if delta < 0 {
+				release := -delta
+				ps, err := s.repo.GetProductStockForUpdate(ctx, tx, prev.SKU, prev.WarehouseID)
+				if err != nil {
+					return nil, err
+				}
+				if ps == nil {
+					return nil, fmt.Errorf("stock not found for sku %s warehouse %s", prev.SKU, prev.WarehouseID)
+				}
+				ps.Release(release)
+				if err := s.repo.UpsertProductStock(ctx, tx, ps); err != nil {
+					return nil, err
+				}
+				if item.Quantity > 0 {
+					if err := s.repo.UpdateReservationQuantity(ctx, tx, prev.ID, item.Quantity); err != nil {
+						return nil, err
+					}
+					// ledger for partial release
+					movement := &entities.StockMovement{
+						ID:          uuid.New().String(),
+						SKU:         prev.SKU,
+						WarehouseID: prev.WarehouseID,
+						Type:        entities.Release,
+						Quantity:    release,
+						ReferenceID: orderID,
+						CreatedAt:   now,
+					}
+					if err := s.repo.CreateMovement(ctx, tx, movement); err != nil {
+						return nil, err
+					}
+					results = append(results, ReservationResult{ReservationID: prev.ID, SKU: prev.SKU, WarehouseID: prev.WarehouseID, Quantity: item.Quantity})
+					continue
+				}
+				// item.Quantity == 0 -> delete reservation
+				if err := s.repo.DeleteReservation(ctx, tx, prev.ID); err != nil {
+					return nil, err
+				}
+				movement := &entities.StockMovement{
+					ID:          uuid.New().String(),
+					SKU:         prev.SKU,
+					WarehouseID: prev.WarehouseID,
+					Type:        entities.Release,
+					Quantity:    release,
+					ReferenceID: orderID,
+					CreatedAt:   now,
+				}
+				if err := s.repo.CreateMovement(ctx, tx, movement); err != nil {
+					return nil, err
+				}
+				results = append(results, ReservationResult{ReservationID: prev.ID, SKU: prev.SKU, WarehouseID: prev.WarehouseID, Quantity: 0})
+				continue
+			}
 		}
 
 		warehouseID := item.WarehouseID

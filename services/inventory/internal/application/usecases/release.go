@@ -46,6 +46,12 @@ func (s *ReleaseService) ReleaseStock(ctx context.Context, orderID string) error
 	}
 
 	for _, r := range reservations {
+		if r.Status == entities.Confirmed {
+			return fmt.Errorf("order %s is already confirmed", orderID)
+		}
+	}
+
+	for _, r := range reservations {
 		if r.Status != entities.Reserved {
 			continue
 		}

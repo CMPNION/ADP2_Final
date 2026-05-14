@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +20,10 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
-	invpb "github.com/cmpnion/adp-final/proto/inventory"
 	catpb "github.com/cmpnion/adp-final/proto/catalog"
-	ordpb "github.com/cmpnion/adp-final/proto/order"
+	invpb "github.com/cmpnion/adp-final/proto/inventory"
 	notpb "github.com/cmpnion/adp-final/proto/notification"
+	ordpb "github.com/cmpnion/adp-final/proto/order"
 )
 
 type contextKey string
@@ -51,6 +53,17 @@ func ensureMetricsRegistered() {
 	metricsOnce.Do(func() {
 		prometheus.MustRegister(httpRequestsTotal, httpRequestDuration)
 	})
+}
+
+func (s *Server) requireRole(role string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		currentRole, _ := r.Context().Value(contextKey("role")).(string)
+		if !strings.EqualFold(currentRole, role) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
 }
 
 type Server struct {
@@ -96,15 +109,15 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/inventory/release", s.auth(s.limit(s.releaseStock)))
 	mux.HandleFunc("/inventory/confirm", s.auth(s.limit(s.confirmStock)))
 	// read operations
-	mux.HandleFunc("/inventory/sku", s.auth(s.limit(s.getStockBySKU))) // GET ?sku=...
-	mux.HandleFunc("/inventory/warehouses", s.auth(s.limit(s.listWarehouses))) // GET
+	mux.HandleFunc("/inventory/sku", s.auth(s.limit(s.getStockBySKU)))                      // GET ?sku=...
+	mux.HandleFunc("/inventory/warehouses", s.auth(s.limit(s.listWarehouses)))              // GET
 	mux.HandleFunc("/inventory/warehouse/stocks", s.auth(s.limit(s.listStocksByWarehouse))) // GET ?warehouse_id=...
-	mux.HandleFunc("/inventory/low", s.auth(s.limit(s.getLowStockItems))) // GET ?limit=10
+	mux.HandleFunc("/inventory/low", s.auth(s.limit(s.getLowStockItems)))                   // GET ?limit=10
 	// admin operations
-	mux.HandleFunc("/inventory/receipt", s.auth(s.limit(s.addStockReceipt)))
-	mux.HandleFunc("/inventory/transfer", s.auth(s.limit(s.transferStock)))
-	mux.HandleFunc("/inventory/safety", s.auth(s.limit(s.updateSafetyStockLevel)))
-	mux.HandleFunc("/inventory/warehouse", s.auth(s.limit(s.createOrUpdateWarehouse))) // POST create, PUT update
+	mux.HandleFunc("/inventory/receipt", s.auth(s.limit(s.requireRole("admin", s.addStockReceipt))))
+	mux.HandleFunc("/inventory/transfer", s.auth(s.limit(s.requireRole("admin", s.transferStock))))
+	mux.HandleFunc("/inventory/safety", s.auth(s.limit(s.requireRole("admin", s.updateSafetyStockLevel))))
+	mux.HandleFunc("/inventory/warehouse", s.auth(s.limit(s.requireRole("admin", s.createOrUpdateWarehouse)))) // POST create, PUT update
 	// catalog operations
 	mux.HandleFunc("/catalog/products", s.auth(s.limit(s.catalogHandler)))
 	mux.HandleFunc("/catalog/search", s.auth(s.limit(s.catalogSearch)))
@@ -133,7 +146,7 @@ func (s *Server) registerHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	var req struct{
+	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		Role     string `json:"role"`
@@ -190,7 +203,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	claims := jwt.MapClaims{"user_id": user.Username, "role": user.Role, "exp": time.Now().Add(24*time.Hour).Unix()}
+	claims := jwt.MapClaims{"user_id": user.Username, "role": user.Role, "exp": time.Now().Add(24 * time.Hour).Unix()}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := tok.SignedString([]byte(s.cfg.JWTSecret))
 	if err != nil {
@@ -199,7 +212,6 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": signed})
 }
-
 
 func (s *Server) readyz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
@@ -220,13 +232,54 @@ func (s *Server) reserveStock(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	orderID := strings.TrimSpace(req.OrderID)
+	if orderID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order_id is required"})
+		return
+	}
+	if len(req.Items) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "items are required"})
+		return
+	}
 	items := make([]*invpb.ReservationItem, 0, len(req.Items))
+	skus := make([]string, 0, len(req.Items))
+	seen := make(map[string]struct{}, len(req.Items))
 	for _, item := range req.Items {
-		items = append(items, &invpb.ReservationItem{Sku: item.SKU, WarehouseId: item.WarehouseID, Qty: item.Qty})
+		sku := strings.TrimSpace(item.SKU)
+		if sku == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sku is required"})
+			return
+		}
+		if item.Qty <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "qty must be greater than zero"})
+			return
+		}
+		items = append(items, &invpb.ReservationItem{Sku: sku, WarehouseId: strings.TrimSpace(item.WarehouseID), Qty: item.Qty})
+		if _, ok := seen[sku]; !ok {
+			seen[sku] = struct{}{}
+			skus = append(skus, sku)
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	resp, err := s.inv.ReserveStock(ctx, &invpb.ReserveStockRequest{OrderId: req.OrderID, Items: items})
+	if err := s.validateCatalogProducts(ctx, skus); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	orderResp, err := s.ord.GetOrder(ctx, &ordpb.GetOrderRequest{OrderId: orderID})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if orderResp.GetOrderId() == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "order not found"})
+		return
+	}
+	if !isMutableOrderStatus(orderResp.GetStatus()) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order is already finalized"})
+		return
+	}
+	resp, err := s.inv.ReserveStock(ctx, &invpb.ReserveStockRequest{OrderId: orderID, Items: items})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -246,6 +299,19 @@ func (s *Server) releaseStock(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	orderResp, err := s.ord.GetOrder(ctx, &ordpb.GetOrderRequest{OrderId: req.OrderID})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if orderResp.GetOrderId() == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "order not found"})
+		return
+	}
+	if !isMutableOrderStatus(orderResp.GetStatus()) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "order is already finalized"})
+		return
+	}
 	resp, err := s.inv.ReleaseStock(ctx, &invpb.ReleaseStockRequest{OrderId: req.OrderID})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
@@ -283,7 +349,11 @@ func (s *Server) getStockBySKU(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sku":             resp.GetSku(),
+		"total_available": resp.GetTotalAvailable(),
+		"total_reserved":  resp.GetTotalReserved(),
+	})
 }
 
 func (s *Server) listWarehouses(w http.ResponseWriter, r *http.Request) {
@@ -317,7 +387,9 @@ func (s *Server) getLowStockItems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("limit")
 	limit := int32(50)
 	if q != "" {
-		// ignore errors, keep default
+		if parsed, err := strconv.ParseInt(q, 10, 32); err == nil && parsed > 0 {
+			limit = int32(parsed)
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -336,16 +408,56 @@ func (s *Server) addStockReceipt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	items := make([]map[string]any, 0)
+	itemsRaw, ok := req["items"].([]any)
+	if !ok || len(itemsRaw) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "items are required"})
+		return
+	}
+	items := make([]map[string]any, 0, len(itemsRaw))
+	skus := make([]string, 0, len(itemsRaw))
+	seen := make(map[string]struct{}, len(itemsRaw))
 	if arr, ok := req["items"].([]any); ok {
 		for _, it := range arr {
-			if m, ok := it.(map[string]any); ok {
-				items = append(items, m)
+			m, ok := it.(map[string]any)
+			if !ok {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "items must be objects"})
+				return
+			}
+			sku, _ := m["sku"].(string)
+			wid, _ := m["warehouse_id"].(string)
+			qty := int64(0)
+			if v, ok := m["qty"].(float64); ok {
+				qty = int64(v)
+			}
+			sku = strings.TrimSpace(sku)
+			wid = strings.TrimSpace(wid)
+			if sku == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sku is required"})
+				return
+			}
+			if wid == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "warehouse_id is required"})
+				return
+			}
+			if qty <= 0 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "qty must be greater than zero"})
+				return
+			}
+			m["sku"] = sku
+			m["warehouse_id"] = wid
+			items = append(items, m)
+			if _, ok := seen[sku]; !ok {
+				seen[sku] = struct{}{}
+				skus = append(skus, sku)
 			}
 		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	if err := s.validateCatalogProducts(ctx, skus); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	outs := make([]map[string]any, 0, len(items))
 	for _, m := range items {
 		sku, _ := m["sku"].(string)
@@ -366,18 +478,37 @@ func (s *Server) addStockReceipt(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) transferStock(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Sku         string `json:"sku"`
+		Sku           string `json:"sku"`
 		FromWarehouse string `json:"from_warehouse"`
 		ToWarehouse   string `json:"to_warehouse"`
-		Qty         int64  `json:"qty"`
+		Qty           int64  `json:"qty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	sku := strings.TrimSpace(req.Sku)
+	if sku == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sku is required"})
+		return
+	}
+	fromWarehouse := strings.TrimSpace(req.FromWarehouse)
+	toWarehouse := strings.TrimSpace(req.ToWarehouse)
+	if fromWarehouse == "" || toWarehouse == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "from_warehouse and to_warehouse are required"})
+		return
+	}
+	if fromWarehouse == toWarehouse {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "from_warehouse and to_warehouse must differ"})
+		return
+	}
+	if req.Qty <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "qty must be greater than zero"})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	resp, err := s.inv.TransferStock(ctx, &invpb.TransferStockRequest{Sku: req.Sku, FromWarehouseId: req.FromWarehouse, ToWarehouseId: req.ToWarehouse, Quantity: req.Qty})
+	resp, err := s.inv.TransferStock(ctx, &invpb.TransferStockRequest{Sku: sku, FromWarehouseId: fromWarehouse, ToWarehouseId: toWarehouse, Quantity: req.Qty})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -387,8 +518,9 @@ func (s *Server) transferStock(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateSafetyStockLevel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Sku   string `json:"sku"`
-		Level int64  `json:"level"`
+		Sku         string `json:"sku"`
+		WarehouseID string `json:"warehouse_id"`
+		Level       int64  `json:"level"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
@@ -396,7 +528,7 @@ func (s *Server) updateSafetyStockLevel(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	resp, err := s.inv.UpdateSafetyStockLevel(ctx, &invpb.UpdateSafetyStockLevelRequest{Sku: req.Sku, Level: req.Level})
+	resp, err := s.inv.UpdateSafetyStockLevel(ctx, &invpb.UpdateSafetyStockLevelRequest{Sku: req.Sku, WarehouseId: req.WarehouseID, Level: req.Level})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -418,22 +550,22 @@ func (s *Server) createOrUpdateWarehouse(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if r.Method == http.MethodPost {
-			resp, err := s.inv.CreateWarehouse(ctx, &invpb.CreateWarehouseRequest{Name: req.Name, Location: req.Location})
-			if err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-				return
-			}
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
-		// PUT -> update
-		resp, err := s.inv.UpdateWarehouseInfo(ctx, &invpb.UpdateWarehouseInfoRequest{WarehouseId: req.Id, Name: req.Name, Location: req.Location, IsActive: req.IsActive})
+		resp, err := s.inv.CreateWarehouse(ctx, &invpb.CreateWarehouseRequest{Name: req.Name, Location: req.Location})
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, resp)
+		return
 	}
+	// PUT -> update
+	resp, err := s.inv.UpdateWarehouseInfo(ctx, &invpb.UpdateWarehouseInfoRequest{WarehouseId: req.Id, Name: req.Name, Location: req.Location, IsActive: req.IsActive})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
 
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -519,24 +651,82 @@ func statusText(code int) string {
 	return http.StatusText(code)
 }
 
+func (s *Server) validateCatalogProducts(ctx context.Context, skus []string) error {
+	if len(skus) == 0 {
+		return nil
+	}
+	resp, err := s.cat.BulkGetProducts(ctx, &catpb.BulkGetProductsRequest{Sku: skus})
+	if err != nil {
+		return err
+	}
+	found := make(map[string]struct{}, len(resp.GetProducts()))
+	for _, p := range resp.GetProducts() {
+		found[p.GetSku()] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, sku := range skus {
+		if _, ok := found[sku]; !ok {
+			missing = append(missing, sku)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("products not found: %s", strings.Join(missing, ","))
+	}
+	return nil
+}
+
 // Catalog handlers
 func (s *Server) catalogHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		var req struct{ Sku, Name, Description string; Price float64 }
+		var req struct {
+			Sku         string  `json:"sku"`
+			ProductID   string  `json:"product_id"`
+			Name        string  `json:"name"`
+			Description string  `json:"description"`
+			Price       float64 `json:"price"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"id": "prod-" + req.Sku, "sku": req.Sku, "name": req.Name})
+		sku := req.Sku
+		if sku == "" {
+			sku = req.ProductID
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		resp, err := s.cat.CreateProduct(ctx, &catpb.CreateProductRequest{
+			Product: &catpb.Product{
+				Sku:         sku,
+				Name:        req.Name,
+				Description: req.Description,
+				Price:       req.Price,
+			},
+		})
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	if r.Method == http.MethodGet {
 		sku := r.URL.Query().Get("sku")
 		if sku == "" {
+			sku = r.URL.Query().Get("product_id")
+		}
+		if sku == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing sku param"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"sku": sku, "name": "Product " + sku, "price": 99.99})
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		resp, err := s.cat.GetProduct(ctx, &catpb.GetProductRequest{Sku: sku})
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -547,83 +737,325 @@ func (s *Server) catalogSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing q param"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"query": query, "products": []map[string]interface{}{}})
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.cat.SearchProducts(ctx, &catpb.SearchProductsRequest{Query: query})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 func (s *Server) catalogUpdatePrice(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Sku string; Price float64 }
+	var req struct {
+		Sku       string  `json:"sku"`
+		ProductID string  `json:"product_id"`
+		Price     float64 `json:"price"`
+		NewPrice  float64 `json:"new_price"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"sku": req.Sku, "new_price": req.Price})
+	sku := req.Sku
+	if sku == "" {
+		sku = req.ProductID
+	}
+	price := req.Price
+	if req.NewPrice != 0 {
+		price = req.NewPrice
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.cat.UpdatePrice(ctx, &catpb.UpdatePriceRequest{Sku: sku, Price: price})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 func (s *Server) catalogBulkGet(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Skus []string }
+	var req struct {
+		Skus []string `json:"skus"`
+		SKU  []string `json:"sku"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"products": []map[string]interface{}{}})
+	skus := req.Skus
+	if len(skus) == 0 {
+		skus = req.SKU
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.cat.BulkGetProducts(ctx, &catpb.BulkGetProductsRequest{Sku: skus})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Order handlers
 func (s *Server) ordersHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		var req struct{ UserId string; Items []map[string]interface{} }
+		var req struct {
+			UserID     string `json:"user_id"`
+			CustomerID string `json:"customer_id"`
+			Items      []struct {
+				SKU       string `json:"sku"`
+				ProductID string `json:"product_id"`
+				Qty       int64  `json:"qty"`
+			} `json:"items"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": "ORD-" + req.UserId, "user_id": req.UserId, "status": "pending"})
+		userID := strings.TrimSpace(req.UserID)
+		if userID == "" {
+			userID = strings.TrimSpace(req.CustomerID)
+		}
+		if userID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id is required"})
+			return
+		}
+		items := make([]*ordpb.OrderItem, 0, len(req.Items))
+		skus := make([]string, 0, len(req.Items))
+		seen := make(map[string]struct{}, len(req.Items))
+		for _, item := range req.Items {
+			sku := strings.TrimSpace(item.SKU)
+			if sku == "" {
+				sku = strings.TrimSpace(item.ProductID)
+			}
+			if sku == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sku is required"})
+				return
+			}
+			if item.Qty <= 0 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "qty must be greater than zero"})
+				return
+			}
+			items = append(items, &ordpb.OrderItem{Sku: sku, Qty: item.Qty})
+			if _, ok := seen[sku]; !ok {
+				seen[sku] = struct{}{}
+				skus = append(skus, sku)
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		// items are optional — allow creating empty orders. If items provided, validate them against catalog
+		if len(skus) > 0 {
+			if err := s.validateCatalogProducts(ctx, skus); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+		resp, err := s.ord.CreateOrder(ctx, &ordpb.CreateOrderRequest{UserId: userID, Items: items})
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"order_id": resp.GetOrderId(),
+			"status":   "CREATED",
+		})
 		return
 	}
 	if r.Method == http.MethodGet {
-		id := r.URL.Query().Get("id")
+		id := r.URL.Query().Get("order_id")
 		if id == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing id param"})
+			id = r.URL.Query().Get("id")
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if id != "" {
+			resp, err := s.ord.GetOrder(ctx, &ordpb.GetOrderRequest{OrderId: id})
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": id, "status": "pending", "items": []map[string]interface{}{}})
+		userID := r.URL.Query().Get("user_id")
+		status := r.URL.Query().Get("status")
+		if userID != "" {
+			resp, err := s.ord.ListOrdersByUser(ctx, &ordpb.ListOrdersByUserRequest{UserId: userID})
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+		resp, err := s.ord.ListOrdersByStatus(ctx, &ordpb.ListOrdersByStatusRequest{Status: status})
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 }
 func (s *Server) ordersCancel(w http.ResponseWriter, r *http.Request) {
-	var req struct{ OrderId string }
+	var req struct {
+		OrderID string `json:"order_id"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": req.OrderId, "status": "cancelled"})
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.ord.CancelOrder(ctx, &ordpb.CancelOrderRequest{OrderId: req.OrderID})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 func (s *Server) ordersStatus(w http.ResponseWriter, r *http.Request) {
-	var req struct{ OrderId, Status string }
+	var req struct {
+		OrderID   string `json:"order_id"`
+		Status    string `json:"status"`
+		NewStatus string `json:"new_status"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"order_id": req.OrderId, "status": req.Status})
+	status := req.Status
+	if status == "" {
+		status = req.NewStatus
+	}
+	normalized, ok := normalizeOrderStatus(status)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid order status"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.ord.UpdateStatus(ctx, &ordpb.UpdateStatusRequest{OrderId: req.OrderID, Status: normalized})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
+
+func normalizeOrderStatus(value string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "CREATED", "PENDING", "CONFIRMED", "PAID", "SHIPPED", "CANCELLED", "COMPLETED":
+		return strings.ToUpper(strings.TrimSpace(value)), true
+	default:
+		return "", false
+	}
+}
+
+func isMutableOrderStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "CREATED", "PENDING":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) ordersCalculate(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Items []map[string]interface{} }
+	var req struct {
+		Items []struct {
+			SKU       string `json:"sku"`
+			ProductID string `json:"product_id"`
+			Qty       int64  `json:"qty"`
+		} `json:"items"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"total": 299.99, "tax": 50.00, "subtotal": 249.99})
+	if len(req.Items) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "items are required"})
+		return
+	}
+	qtyBySKU := make(map[string]int64, len(req.Items))
+	skus := make([]string, 0, len(req.Items))
+	for _, item := range req.Items {
+		sku := item.SKU
+		if sku == "" {
+			sku = item.ProductID
+		}
+		if sku == "" || item.Qty <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "each item must include sku and positive qty"})
+			return
+		}
+		if _, exists := qtyBySKU[sku]; !exists {
+			skus = append(skus, sku)
+		}
+		qtyBySKU[sku] += item.Qty
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	catalogResp, err := s.cat.BulkGetProducts(ctx, &catpb.BulkGetProductsRequest{Sku: skus})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	priceBySKU := make(map[string]float64, len(catalogResp.GetProducts()))
+	for _, p := range catalogResp.GetProducts() {
+		priceBySKU[p.GetSku()] = p.GetPrice()
+	}
+	missing := make([]string, 0)
+	var total float64
+	for sku, qty := range qtyBySKU {
+		price, ok := priceBySKU[sku]
+		if !ok {
+			missing = append(missing, sku)
+			continue
+		}
+		total += float64(qty) * price
+	}
+	if len(missing) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":        "some sku not found in catalog",
+			"missing_skus": missing,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, &ordpb.CalculateTotalResponse{Total: total})
 }
 func (s *Server) ordersBulk(w http.ResponseWriter, r *http.Request) {
-	var req struct{ OrderIds []string }
+	var req struct {
+		OrderIDs []string `json:"order_ids"`
+		OrderID  []string `json:"order_id"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"orders": []map[string]interface{}{}})
+	orderIDs := req.OrderIDs
+	if len(orderIDs) == 0 {
+		orderIDs = req.OrderID
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := s.ord.BulkGetOrders(ctx, &ordpb.BulkGetOrdersRequest{OrderId: orderIDs})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Notification handlers
 func (s *Server) notificationEmail(w http.ResponseWriter, r *http.Request) {
-	var req struct{ To, Subject, Body string }
+	var req struct {
+		To      string `json:"to"`
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
@@ -638,14 +1070,23 @@ func (s *Server) notificationEmail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 func (s *Server) notificationOrderConfirm(w http.ResponseWriter, r *http.Request) {
-	var req struct{ To, OrderId string }
+	var req struct {
+		To            string `json:"to"`
+		CustomerEmail string `json:"customer_email"`
+		OrderID       string `json:"order_id"`
+		OrderDetails  string `json:"order_details"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	to := req.To
+	if to == "" {
+		to = req.CustomerEmail
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	resp, err := s.not.SendOrderConfirmation(ctx, &notpb.SendOrderConfirmationRequest{To: req.To, OrderId: req.OrderId})
+	resp, err := s.not.SendOrderConfirmation(ctx, &notpb.SendOrderConfirmationRequest{To: to, OrderId: req.OrderID})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -653,14 +1094,29 @@ func (s *Server) notificationOrderConfirm(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, resp)
 }
 func (s *Server) notificationStockAlert(w http.ResponseWriter, r *http.Request) {
-	var req struct{ To, Sku, Body string }
+	var req struct {
+		To          string `json:"to"`
+		SKU         string `json:"sku"`
+		WarehouseID string `json:"warehouse_id"`
+		CurrentQty  int64  `json:"current_qty"`
+		Threshold   int64  `json:"threshold"`
+		Body        string `json:"body"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	body := req.Body
+	if body == "" {
+		body = fmt.Sprintf("warehouse_id=%s current_qty=%d threshold=%d", req.WarehouseID, req.CurrentQty, req.Threshold)
+	}
+	to := req.To
+	if to == "" {
+		to = "admin@inventory.local"
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	resp, err := s.not.SendStockAlert(ctx, &notpb.SendStockAlertRequest{To: req.To, Sku: req.Sku, Body: req.Body})
+	resp, err := s.not.SendStockAlert(ctx, &notpb.SendStockAlertRequest{To: to, Sku: req.SKU, Body: body})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return

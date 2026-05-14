@@ -15,6 +15,22 @@ message CalculateTotalRequest { repeated OrderItem items = 1; }
 message CalculateTotalResponse { double total = 1; }
 message BulkGetOrdersRequest { repeated string order_id = 1; }
 message BulkGetOrdersResponse { repeated GetOrderResponse orders = 1; }
+message ListOrdersByUserRequest { string user_id = 1; }
+message ListOrdersByUserResponse { repeated GetOrderResponse orders = 1; }
+message ListOrdersByStatusRequest { string status = 1; }
+message ListOrdersByStatusResponse { repeated GetOrderResponse orders = 1; }
+message ConfirmOrderRequest { string order_id = 1; }
+message ConfirmOrderResponse { bool success = 1; }
+message MarkOrderPaidRequest { string order_id = 1; }
+message MarkOrderPaidResponse { bool success = 1; }
+message ShipOrderRequest { string order_id = 1; }
+message ShipOrderResponse { bool success = 1; }
+message GetOrderStatsRequest {}
+message GetOrderStatsResponse {
+  int32 total_orders = 1;
+  int32 pending_orders = 2;
+  int32 completed_orders = 3;
+}
 service OrderService {
   rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
   rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
@@ -22,4 +38,10 @@ service OrderService {
   rpc UpdateStatus(UpdateStatusRequest) returns (UpdateStatusResponse);
   rpc CalculateTotal(CalculateTotalRequest) returns (CalculateTotalResponse);
   rpc BulkGetOrders(BulkGetOrdersRequest) returns (BulkGetOrdersResponse);
+  rpc ListOrdersByUser(ListOrdersByUserRequest) returns (ListOrdersByUserResponse);
+  rpc ListOrdersByStatus(ListOrdersByStatusRequest) returns (ListOrdersByStatusResponse);
+  rpc ConfirmOrder(ConfirmOrderRequest) returns (ConfirmOrderResponse);
+  rpc MarkOrderPaid(MarkOrderPaidRequest) returns (MarkOrderPaidResponse);
+  rpc ShipOrder(ShipOrderRequest) returns (ShipOrderResponse);
+  rpc GetOrderStats(GetOrderStatsRequest) returns (GetOrderStatsResponse);
 }
