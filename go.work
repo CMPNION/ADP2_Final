@@ -3,6 +3,7 @@ go 1.25.0
 use (
 	./api-gateway
 	./proto
+	./services/auth-service
 	./services/catalog-service
 	./services/inventory
 	./services/notification-service

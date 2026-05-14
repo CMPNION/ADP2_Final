@@ -1,9 +1,9 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 COPY services/auth-service ./services/auth-service
+WORKDIR /src/services/auth-service
+RUN go mod download
 WORKDIR /src/services/auth-service/cmd
-RUN go mod init omnichannel/auth-service || true
-RUN go get github.com/golang-jwt/jwt/v5 golang.org/x/crypto/bcrypt
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/auth ./main.go
 
 FROM alpine:3.20

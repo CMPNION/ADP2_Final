@@ -1,6 +1,15 @@
 syntax = "proto3";
 package notification;
-option go_package = "github.com/yourorg/proto/notification;notification";
-message SendEmailRequest { string to=1; string subject=2; string body=3; }
-message SendEmailResponse { bool ok=1; }
-service NotificationService { rpc SendEmail(SendEmailRequest) returns (SendEmailResponse); }
+option go_package = "omnichannel/proto/notification;notification";
+
+message SendEmailRequest { string to = 1; string subject = 2; string body = 3; }
+message SendEmailResponse { bool ok = 1; }
+message SendOrderConfirmationRequest { string to = 1; string order_id = 2; }
+message SendOrderConfirmationResponse { bool ok = 1; }
+message SendStockAlertRequest { string to = 1; string sku = 2; string body = 3; }
+message SendStockAlertResponse { bool ok = 1; }
+service NotificationService {
+  rpc SendEmail(SendEmailRequest) returns (SendEmailResponse);
+  rpc SendOrderConfirmation(SendOrderConfirmationRequest) returns (SendOrderConfirmationResponse);
+  rpc SendStockAlert(SendStockAlertRequest) returns (SendStockAlertResponse);
+}
