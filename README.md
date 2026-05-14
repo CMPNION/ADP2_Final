@@ -6,15 +6,14 @@ Production-ready microservices architecture for distributed inventory management
 
 ```
 .
-├── proto/                          # gRPC Protocol Buffers
-│   ├── inventory.proto             # Inventory Service (12 endpoints)
-│   ├── catalog.proto               # Catalog Service (5 endpoints)
-│   ├── order.proto                 # Order Service (6 endpoints)
-│   ├── notification.proto          # Notification Service (3 endpoints)
-│   └── events.proto                # Event definitions
+├── proto/                          # Shared generated Go protobuf module
+│   ├── *.proto                     # Synced from service-local proto files
+│   ├── sync_service_protos.sh      # Sync + regenerate helper
+│   └── {catalog,order,...}/        # Generated .pb.go files
 │
 ├── services/
 │   ├── inventory/                  # Inventory Microservice
+│   │   ├── proto/                  # inventory.proto + events.proto (source of truth)
 │   │   ├── internal/
 │   │   │   ├── domain/             # Entities & interfaces
 │   │   │   ├── application/        # Business logic (usecases)
@@ -24,12 +23,15 @@ Production-ready microservices architecture for distributed inventory management
 │   │   └── cmd/                    # Service entrypoint
 │   │
 │   ├── catalog-service/            # Catalog Microservice
+│   │   ├── proto/                  # catalog.proto (source of truth)
 │   │   └── cmd/
 │   │
 │   ├── order-service/              # Order Microservice
+│   │   ├── proto/                  # order.proto (source of truth)
 │   │   └── cmd/
 │   │
 │   ├── notification-service/       # Notification Microservice
+│   │   ├── proto/                  # notification.proto (+ events.proto copy)
 │   │   └── cmd/
 │   │
 │   └── auth-service/               # Authentication Service (HTTP)
@@ -77,6 +79,13 @@ Endpoints:
 - SearchProducts
 - UpdatePrice
 - BulkGetProducts
+- DeleteProduct
+- ListProducts
+- UpsertProduct
+- BatchUpdatePrice
+- GetProductsByPriceRange
+- AdjustPriceByPercent
+- GetCatalogStats
 
 ### Order Service (gRPC: 50053)
 Order lifecycle and cart calculations.
@@ -88,6 +97,12 @@ Endpoints:
 - UpdateStatus
 - CalculateTotal
 - BulkGetOrders
+- ListOrdersByUser
+- ListOrdersByStatus
+- ConfirmOrder
+- MarkOrderPaid
+- ShipOrder
+- GetOrderStats
 
 ### Notification Service (gRPC: 50054)
 Email and alert notifications via NATS events.
