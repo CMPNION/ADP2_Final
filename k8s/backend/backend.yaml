@@ -1,0 +1,517 @@
+#
+# Purpose: platform namespace, shared config, secrets, and backend workloads.
+# Images are intentionally pinned to demo-friendly ghcr.io placeholders.
+#
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: omnichannel
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omnichannel-config
+  namespace: omnichannel
+data:
+  NATS_URL: nats://nats:4222
+  REDIS_ADDR: redis:6379
+  INVENTORY_GRPC_ADDR: inventory-service:50051
+  CATALOG_SERVICE_ADDR: catalog-service:50052
+  ORDER_SERVICE_ADDR: order-service:50053
+  NOTIFICATION_SERVICE_ADDR: notification-service:50054
+  METRICS_ADDR: :9095
+  NOTIFICATION_MODE: log
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: omnichannel-secrets
+  namespace: omnichannel
+type: Opaque
+stringData:
+  JWT_SECRET: dev-jwt-secret
+  AUTH_DATABASE_URL: postgres://postgres:pass@postgres-identity:5432/identity_db?sslmode=disable
+  CATALOG_DATABASE_URL: postgres://postgres:pass@postgres-catalog:5432/catalog_db?sslmode=disable
+  ORDER_DATABASE_URL: postgres://postgres:pass@postgres-order:5432/order_db?sslmode=disable
+  INVENTORY_DATABASE_URL: postgres://postgres:pass@postgres-inventory:5432/inventory_db?sslmode=disable
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: omnichannel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: ghcr.io/cmpnion/adp-final/api-gateway:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTP_ADDR
+              value: :8080
+            - name: METRICS_ADDR
+              value: :9095
+            - name: INVENTORY_GRPC_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: omnichannel-config
+                  key: INVENTORY_GRPC_ADDR
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: omnichannel-secrets
+                  key: JWT_SECRET
+            - name: RATE_LIMIT_PER_MINUTE
+              value: "120"
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9095
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 18
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: omnichannel
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: metrics
+      port: 9095
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: omnichannel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: ghcr.io/cmpnion/adp-final/auth-service:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTP_ADDR
+              value: :8090
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: omnichannel-secrets
+                  key: JWT_SECRET
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: omnichannel-secrets
+                  key: AUTH_DATABASE_URL
+          ports:
+            - name: http
+              containerPort: 8090
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 18
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: omnichannel
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service
+  namespace: omnichannel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: catalog-service
+  template:
+    metadata:
+      labels:
+        app: catalog-service
+    spec:
+      containers:
+        - name: catalog-service
+          image: ghcr.io/cmpnion/adp-final/catalog-service:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTP_ADDR
+              value: :8081
+            - name: GRPC_ADDR
+              value: :50052
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: omnichannel-secrets
+                  key: CATALOG_DATABASE_URL
+            - name: NATS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: omnichannel-config
+                  key: NATS_URL
+          ports:
+            - name: http
+              containerPort: 8081
+            - name: grpc
+              containerPort: 50052
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 18
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  namespace: omnichannel
+spec:
+  selector:
+    app: catalog-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+    - name: grpc
+      port: 50052
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: omnichannel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: ghcr.io/cmpnion/adp-final/order-service:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HTTP_ADDR
+              value: :8082
+            - name: GRPC_ADDR
+              value: :50053
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: omnichannel-secrets
+                  key: ORDER_DATABASE_URL
+            - name: NATS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: omnichannel-config
+                  key: NATS_URL
+            - name: CATALOG_SERVICE_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: omnichannel-config
+                  key: CATALOG_SERVICE_ADDR
+          ports:
+            - name: http
+              containerPort: 8082
+            - name: grpc
+              containerPort: 50053
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 18
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: omnichannel
+spec:
+  selector:
+    app: order-service
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http
+    - name: grpc
+      port: 50053
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+  namespace: omnichannel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: inventory-service
+  template:
+    metadata:
+      labels:
+        app: inventory-service
+    spec:
+      containers:
+        - name: inventory-service
+          image: ghcr.io/cmpnion/adp-final/inventory-service:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GRPC_ADDR
+              value: :50051
+            - name: METRICS_ADDR
+              value: :9090
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: omnichannel-secrets
+                  key: INVENTORY_DATABASE_URL
+            - name: REDIS_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: omnichannel-config
+                  key: REDIS_ADDR
+            - name: NATS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: omnichannel-config
+                  key: NATS_URL
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: metrics
+              containerPort: 9090
+          resources:
+            requests:
+              cpu: 150m
+              memory: 192Mi
+            limits:
+              cpu: 750m
+              memory: 768Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            failureThreshold: 18
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service
+  namespace: omnichannel
+spec:
+  selector:
+    app: inventory-service
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: omnichannel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+    spec:
+      containers:
+        - name: notification-service
+          image: ghcr.io/cmpnion/adp-final/notification-service:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GRPC_ADDR
+              value: :50054
+            - name: METRICS_ADDR
+              value: :8083
+            - name: NATS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: omnichannel-config
+                  key: NATS_URL
+            - name: NOTIFICATION_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: omnichannel-config
+                  key: NOTIFICATION_MODE
+          ports:
+            - name: grpc
+              containerPort: 50054
+            - name: metrics
+              containerPort: 8083
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            failureThreshold: 18
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: omnichannel
+spec:
+  selector:
+    app: notification-service
+  ports:
+    - name: grpc
+      port: 50054
+      targetPort: grpc
+    - name: metrics
+      port: 8083
+      targetPort: metrics

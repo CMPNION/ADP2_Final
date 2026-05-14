@@ -1,0 +1,24 @@
+# Purpose: keep backend Docker build contexts small, deterministic, and free of local artifacts.
+
+.git
+.github
+.idea
+.vscode
+.DS_Store
+
+.env
+.env.*
+
+docs
+demo
+terraform
+k8s
+monitoring
+loadtesting
+scripts
+
+**/node_modules
+**/coverage
+**/build
+**/dist
+**/*.log

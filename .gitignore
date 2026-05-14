@@ -1,1 +1,31 @@
+# Environment files
 .env
+.env.*
+!.env.example
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Build artifacts
+**/build/
+**/dist/
+**/coverage/
+**/bin/
+**/node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Terraform state and cache
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+
+# Local secrets
+k8s/**/secret*.yaml
+k8s/**/secrets*.yaml

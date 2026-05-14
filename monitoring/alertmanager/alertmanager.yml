@@ -1,0 +1,20 @@
+# Purpose: route Prometheus alerts to a visible local sink during the demo.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: ['alertname', 'job']
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 2h
+
+receivers:
+  - name: default
+    webhook_configs:
+      # This webhook is intentionally pointed at an invalid local endpoint for demo safety.
+      # Replace it with Slack/email/Telegram in a real deployment.
+      - url: http://127.0.0.1:0
+        send_resolved: true
+
+templates: []

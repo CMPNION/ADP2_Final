@@ -46,6 +46,13 @@ Production-ready microservices architecture for distributed inventory management
 │   └── src/App.js
 │
 ├── docker-compose.yml              # Service orchestration
+├── k8s/                            # Kubernetes manifests for app + ingress + HPA
+├── monitoring/                     # Prometheus, Grafana, Alertmanager configs
+├── terraform/                      # IaC scaffold for cloud deployment
+├── loadtesting/                    # Locust scenarios for SRE demos
+├── scripts/                        # Demo helpers and traffic spikes
+├── demo/                           # Presentation runbook
+├── .github/workflows/              # CI/CD pipeline
 ├── Dockerfile                      # Multi-service build
 └── API_ENDPOINTS.md               # Complete endpoint reference
 
@@ -153,7 +160,34 @@ Database: PostgreSQL 15
 Cache: Redis 7
 Queue: NATS 2.x
 Container: Docker & Docker Compose
-Observability: Prometheus metrics
+Orchestration: Kubernetes + HPA
+IaC: Terraform
+CI/CD: GitHub Actions
+Observability: Prometheus, Grafana, Alertmanager
+
+## Architecture
+
+```mermaid
+flowchart LR
+  U[Users] --> F[Frontend]
+  U --> G[API Gateway]
+  F --> G
+  G --> A[Auth Service]
+  G --> O[Order Service]
+  G --> C[Catalog Service]
+  G --> I[Inventory Service]
+  O --> N[NATS]
+  I --> N
+  A --> P[(PostgreSQL)]
+  O --> P
+  C --> P
+  I --> P
+  I --> R[(Redis)]
+  G --> M[Metrics Listener]
+  M --> PR[Prometheus]
+  PR --> GF[Grafana]
+  PR --> AM[Alertmanager]
+```
 
 ## Key Features
 
@@ -177,6 +211,9 @@ Clean Architecture - Domain → Usecase → Infra → Delivery layer separation
 1. Start services
    docker compose up -d --build
 
+   Or use the one-shot platform target:
+   - `make all`
+
 2. Register & Login
    - Frontend: http://localhost:3000
    - Username: demo, Password: pass
@@ -186,7 +223,20 @@ Clean Architecture - Domain → Usecase → Infra → Delivery layer separation
    All endpoints require Authorization: Bearer <jwt_token>
 
 4. View metrics
-   http://localhost:8080/metrics
+   http://localhost:9095/metrics
+
+5. Run load testing
+   - `make locust`
+
+## CI/CD and Kubernetes
+
+- `k8s/backend/backend.yaml` deploys the API gateway and services.
+- `k8s/frontend/frontend.yaml` deploys the web UI and nginx proxy.
+- `k8s/ingress/ingress.yaml` exposes the app through a single ingress.
+- `k8s/autoscaling/hpa.yaml` scales the main workloads on CPU/memory.
+- `.github/workflows/ci-cd.yml` runs tests, builds images, pushes to GHCR, and deploys to the cluster.
+- `terraform/` contains reusable infrastructure scaffolding and environment examples.
+- Root Terraform uses a local backend by default so `terraform init` works without S3 inputs.
 
 ### Manual Setup (Development)
 
@@ -252,16 +302,48 @@ See API_ENDPOINTS.md for complete endpoint documentation with request/response e
 
 ## Observability
 
-Prometheus Metrics - /metrics endpoint exposes:
-- api_gateway_http_requests_total - Request counter by method/path/status
-- api_gateway_http_request_duration_seconds - Request latency histogram
-- grpc interceptors measure latency for all gRPC calls
+Prometheus scrapes the service metrics listeners:
+- `api-gateway` via `METRICS_ADDR=:9095`
+- `inventory-service` via `METRICS_ADDR=:9090`
+- `catalog-service` via `HTTP_ADDR=:8081`
+- `order-service` via `HTTP_ADDR=:8082`
+- `auth-service` via `HTTP_ADDR=:8090`
+- `notification-service` via `METRICS_ADDR=:8083`
+
+Key series:
+- `api_gateway_http_requests_total` - request counter by method/path/status
+- `api_gateway_http_request_duration_seconds` - request latency histogram
+- `order_http_requests_total` / `order_http_request_duration_seconds`
+- `catalog_http_requests_total` / `catalog_http_request_duration_seconds`
+- gRPC interceptors measure latency for inventory and notification calls
+
+Local monitoring stack:
+- `prometheus` on `http://localhost:9091`
+- `grafana` on `http://localhost:3001`
+- `alertmanager` on `http://localhost:9093`
+- `k8s/monitoring/` mirrors the same stack for cluster deployment
+- `monitoring/grafana/dashboards/` now has a dashboard per service with traffic, latency, error ratio, and `Живы ли они`
 
 Logs - Structured JSON logs with correlation IDs from gateway
 
 Health Checks:
 - /healthz - Basic health (200 OK if running)
 - /readyz - Readiness (checks dependencies)
+
+## SRE / Scaling
+
+- `docs/sre.md` - SLIs, SLOs, error budgets, and the demo operating model.
+- `k8s/autoscaling/hpa.yaml` - CPU/memory HPA manifests for the main services.
+- `loadtesting/locustfile.py` - Locust scenarios for traffic and reservation flows.
+- `loadtesting/requirements.txt` - Python dependency list for the load-test harness.
+- `scripts/traffic_spike.sh` - staged spike script for autoscaling validation.
+- `demo/demo-script.md` - presentation flow for dashboards, alerts, and rollout.
+
+Quick start for the load test:
+
+1. Install dependencies: `pip install -r loadtesting/requirements.txt`
+2. Run the spike: `bash scripts/traffic_spike.sh`
+3. Watch metrics and HPA reactions in the dashboard / cluster view
 
 ## Production Considerations
 

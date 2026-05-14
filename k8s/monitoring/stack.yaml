@@ -1,0 +1,426 @@
+# Purpose: deploy the in-cluster observability stack used by the PRR demo.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - /etc/prometheus/rules/alerts.yml
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager.monitoring.svc.cluster.local:9093
+
+    scrape_configs:
+      - job_name: api-gateway
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['api-gateway.omnichannel.svc.cluster.local:9095']
+
+      - job_name: inventory-service
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['inventory-service.omnichannel.svc.cluster.local:9090']
+
+      - job_name: catalog-service
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['catalog-service.omnichannel.svc.cluster.local:8081']
+
+      - job_name: order-service
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['order-service.omnichannel.svc.cluster.local:8082']
+
+      - job_name: auth-service
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['auth-service.omnichannel.svc.cluster.local:8090']
+
+      - job_name: notification-service
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['notification-service.omnichannel.svc.cluster.local:8083']
+
+  alerts.yml: |
+    groups:
+      - name: platform-alerts
+        rules:
+          - alert: GatewayHighErrorRate
+            expr: sum(rate(api_gateway_http_requests_total{status=~"5.."}[5m])) / sum(rate(api_gateway_http_requests_total[5m])) > 0.05
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "API gateway error rate is above 5%"
+              description: "The gateway is returning too many 5xx responses."
+
+          - alert: OrderServiceHighErrorRate
+            expr: sum(rate(order_http_requests_total{status=~"5.."}[5m])) / sum(rate(order_http_requests_total[5m])) > 0.05
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Order service error rate is above 5%"
+              description: "Order traffic is failing more often than expected."
+
+          - alert: InventoryGrpcLatencyHigh
+            expr: histogram_quantile(0.95, sum(rate(inventory_grpc_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Inventory p95 latency is above 500ms"
+              description: "Inventory gRPC requests are slower than the demo SLO."
+
+          - alert: ServiceDown
+            expr: up == 0
+            for: 3m
+            labels:
+              severity: critical
+            annotations:
+              summary: "A monitored target is down"
+              description: "Prometheus cannot scrape one of the monitored services."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --web.enable-lifecycle
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+            - name: config
+              mountPath: /etc/prometheus/rules/alerts.yml
+              subPath: alerts.yml
+            - name: data
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: default
+      group_by: ['alertname', 'job']
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 2h
+
+    receivers:
+      - name: default
+        webhook_configs:
+          - url: http://127.0.0.1:0
+            send_resolved: true
+
+    templates: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+          ports:
+            - containerPort: 9093
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager/alertmanager.yml
+              subPath: alertmanager.yml
+            - name: data
+              mountPath: /alertmanager
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: 9093
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource
+  namespace: monitoring
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.monitoring.svc.cluster.local:9090
+        isDefault: true
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: monitoring
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: Omnichannel
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-omnichannel
+  namespace: monitoring
+data:
+  omnichannel.json: |
+    {
+      "annotations": {"list": []},
+      "description": "Grafana dashboard for gateway, inventory, order, and auth metrics.",
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "id": 1,
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+          "targets": [{"expr": "sum(rate(api_gateway_http_requests_total[5m]))", "legendFormat": "gateway rps", "refId": "A"}],
+          "title": "API Gateway Requests/sec",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "id": 2,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(api_gateway_http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "gateway p95", "refId": "A"}],
+          "title": "API Gateway p95 Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "id": 3,
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+          "targets": [{"expr": "sum(rate(order_http_requests_total[5m]))", "legendFormat": "order rps", "refId": "A"}],
+          "title": "Order Service Requests/sec",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "id": 4,
+          "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+          "targets": [{"expr": "histogram_quantile(0.95, sum(rate(inventory_grpc_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "inventory p95", "refId": "A"}],
+          "title": "Inventory gRPC p95 Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+          "gridPos": {"h": 7, "w": 12, "x": 0, "y": 16},
+          "id": 5,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "orientation": "auto",
+            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+            "textMode": "value"
+          },
+          "targets": [{"expr": "sum(rate(api_gateway_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(api_gateway_http_requests_total[5m]))", "legendFormat": "gateway 5xx ratio", "refId": "A"}],
+          "title": "Gateway Error Ratio",
+          "type": "stat"
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": ["omnichannel", "sre", "prr"],
+      "templating": {"list": []},
+      "time": {"from": "now-6h", "to": "now"},
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Omnichannel SRE Overview",
+      "uid": "omnichannel-sre",
+      "version": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: admin
+          volumeMounts:
+            - name: datasource
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yml
+              subPath: datasource.yml
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
+              subPath: dashboards.yml
+            - name: dashboard
+              mountPath: /var/lib/grafana/dashboards/omnichannel.json
+              subPath: omnichannel.json
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: datasource
+          configMap:
+            name: grafana-datasource
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboard
+          configMap:
+            name: grafana-dashboard-omnichannel
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

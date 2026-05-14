@@ -1,5 +1,3 @@
-
-
 I already have a working fullstack monorepo project:
 - frontend
 - backend

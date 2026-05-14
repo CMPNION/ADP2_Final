@@ -1,0 +1,9 @@
+# Purpose: keep the frontend image build context focused on source code only.
+
+node_modules
+build
+coverage
+.env
+.env.*
+.DS_Store
+*.log

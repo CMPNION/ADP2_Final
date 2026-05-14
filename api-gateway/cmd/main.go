@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -51,18 +52,44 @@ func main() {
 		Handler:           srv.Router(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	metricsMux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	})
+	metricsServer := &http.Server{
+		Addr:              cfg.MetricsAddr,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		_ = httpServer.Shutdown(shutdownCtx)
+		_ = metricsServer.Shutdown(shutdownCtx)
 	}()
 
 	ln, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+	metricsLn, err := net.Listen("tcp", cfg.MetricsAddr)
+	if err != nil {
+		log.Fatalf("metrics listen: %v", err)
+	}
+	go func() {
+		log.Printf("api-gateway metrics listening on %s", cfg.MetricsAddr)
+		if err := metricsServer.Serve(metricsLn); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("metrics serve: %v", err)
+		}
+	}()
 	log.Printf("api-gateway listening on %s", cfg.HTTPAddr)
 	if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("serve: %v", err)

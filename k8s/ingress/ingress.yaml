@@ -1,0 +1,33 @@
+#
+# Purpose: ingress routing for the application and public demo hosts.
+#
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: omnichannel-ingress
+  namespace: omnichannel
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: omnichannel.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+    - host: api.omnichannel.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080

@@ -1,6 +1,11 @@
 SHELL := /bin/bash
 
-.PHONY: help up down rebuild clean reset migrate migrate-inventory migrate-catalog migrate-order migrate-identity proto-sync test-backend test-frontend test-all bootstrap
+TF_DIR ?= terraform
+K8S_DIR ?= k8s
+LOADTEST_DIR ?= loadtesting
+TARGET_URL ?= http://localhost:8080
+
+.PHONY: help up down rebuild clean reset wait-for-databases migrate migrate-inventory migrate-catalog migrate-order migrate-identity proto-sync test-backend test-frontend test-all stack bootstrap terraform-init terraform-fmt terraform-validate terraform-apply k8s-apply monitoring-apply platform-up all locust locust-install
 
 help:
 	@echo "Targets:"
@@ -9,6 +14,11 @@ help:
 	@echo "  make rebuild           - docker compose build --no-cache"
 	@echo "  make clean             - docker compose down -v --remove-orphans"
 	@echo "  make reset             - clean + up"
+	@echo "  make stack             - up + wait for DBs + migrate (full local platform)"
+	@echo "  make platform-up      - terraform + k8s + monitoring + local stack"
+	@echo "  make all               - alias for platform-up"
+	@echo "  make locust           - install Locust if needed and run it against TARGET_URL"
+	@echo "  make locust-install   - install Locust dependencies"
 	@echo "  make migrate           - run all available migrations"
 	@echo "  make proto-sync        - sync service proto files and regenerate pb.go"
 	@echo "  make test-backend      - run Go tests"
@@ -29,6 +39,15 @@ clean:
 	docker compose down -v --remove-orphans
 
 reset: clean up
+
+wait-for-databases:
+	@echo "Waiting for PostgreSQL containers to become ready..."
+	@until docker compose exec -T postgres_inventory pg_isready -U postgres -d inventory_db >/dev/null 2>&1 && \
+		docker compose exec -T postgres_catalog pg_isready -U postgres -d catalog_db >/dev/null 2>&1 && \
+		docker compose exec -T postgres_order pg_isready -U postgres -d order_db >/dev/null 2>&1 && \
+		docker compose exec -T postgres_identity pg_isready -U postgres -d identity_db >/dev/null 2>&1; do \
+		sleep 2; \
+	done
 
 migrate: migrate-inventory migrate-catalog migrate-order migrate-identity
 
@@ -59,8 +78,38 @@ test-frontend:
 
 test-all: test-backend test-frontend
 
-bootstrap: clean up
-	@echo "Waiting for databases to become healthy..."
-	sleep 10
-	$(MAKE) migrate
-	$(MAKE) test-all
+bootstrap: clean stack test-all
+
+stack: up wait-for-databases migrate
+
+terraform-init:
+	terraform -chdir=$(TF_DIR) init
+
+terraform-fmt:
+	terraform -chdir=$(TF_DIR) fmt -check
+
+terraform-validate: terraform-init
+	terraform -chdir=$(TF_DIR) validate
+
+terraform-apply: terraform-validate
+	terraform -chdir=$(TF_DIR) apply -auto-approve
+
+k8s-apply:
+	kubectl apply -f $(K8S_DIR)/backend/backend.yaml
+	kubectl apply -f $(K8S_DIR)/frontend/frontend.yaml
+	kubectl apply -f $(K8S_DIR)/ingress/ingress.yaml
+	kubectl apply -f $(K8S_DIR)/autoscaling/hpa.yaml
+
+monitoring-apply:
+	kubectl apply -f $(K8S_DIR)/monitoring/stack.yaml
+
+platform-up: terraform-fmt terraform-validate up wait-for-databases migrate k8s-apply monitoring-apply
+
+all: platform-up
+
+locust-install:
+	python3 -m pip install --user -r $(LOADTEST_DIR)/requirements.txt
+
+locust:
+	$(MAKE) locust-install
+	python3 -m locust -f $(LOADTEST_DIR)/locustfile.py --host=$(TARGET_URL)

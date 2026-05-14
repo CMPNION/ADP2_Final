@@ -1,0 +1,127 @@
+#
+# Purpose: PRR-ready CI/CD pipeline with tests, image builds, registry push, and cluster deployment.
+#
+name: ci-cd
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/cmpnion/adp-final
+
+jobs:
+  lint-test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Run tests
+        run: go test ./api-gateway/... ./services/... ./proto/...
+
+  build-images:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    needs: lint-test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api-gateway
+            context: .
+            file: api-gateway/Dockerfile
+          - service: inventory-service
+            context: .
+            file: services/inventory/Dockerfile
+          - service: catalog-service
+            context: .
+            file: services/catalog-service/Dockerfile
+          - service: order-service
+            context: .
+            file: services/order-service/Dockerfile
+          - service: auth-service
+            context: .
+            file: services/auth-service/Dockerfile
+          - service: notification-service
+            context: .
+            file: services/notification-service/Dockerfile
+          - service: frontend
+            context: ./frontend
+            file: Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.30.0'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 -d > "$HOME/.kube/config"
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -f k8s/backend/backend.yaml
+          kubectl apply -f k8s/frontend/frontend.yaml
+          kubectl apply -f k8s/ingress/ingress.yaml
+          kubectl apply -f k8s/autoscaling/hpa.yaml
+
+      - name: Wait for rollout
+        run: |
+          for deploy in api-gateway auth-service catalog-service order-service inventory-service notification-service frontend; do
+            kubectl rollout status deployment/"$deploy" -n omnichannel --timeout=5m
+          done
+
+      - name: Roll back on failure
+        if: failure()
+        run: |
+          for deploy in api-gateway auth-service catalog-service order-service inventory-service notification-service frontend; do
+            kubectl rollout undo deployment/"$deploy" -n omnichannel || true
+          done

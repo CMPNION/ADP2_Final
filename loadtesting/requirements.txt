@@ -1,0 +1,2 @@
+# Purpose: minimal dependency list for the SRE load-test harness.
+locust>=2.20,<3

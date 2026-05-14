@@ -7,6 +7,7 @@ import (
 
 type Config struct {
 	HTTPAddr           string
+	MetricsAddr        string
 	InventoryGRPCAddr  string
 	AuthToken          string
 	JWTSecret          string
@@ -16,6 +17,7 @@ type Config struct {
 func LoadConfig() Config {
 	return Config{
 		HTTPAddr:           envOr("HTTP_ADDR", ":8080"),
+		MetricsAddr:        envOr("METRICS_ADDR", ":9095"),
 		InventoryGRPCAddr:  envOr("INVENTORY_GRPC_ADDR", "127.0.0.1:50051"),
 		AuthToken:          os.Getenv("AUTH_TOKEN"),
 		JWTSecret:          os.Getenv("JWT_SECRET"),
