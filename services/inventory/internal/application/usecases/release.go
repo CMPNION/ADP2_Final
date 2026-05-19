@@ -10,7 +10,7 @@ import (
 	"github.com/cmpnion/adp-final/services/inventory/internal/domain/entities"
 )
 
-// ReleaseService releases reservations for an order
+// ReleaseService cancels all reservations for an order
 type ReleaseService struct {
 	repo      domain.Repository
 	locker    Locker
@@ -22,77 +22,99 @@ func NewReleaseService(r domain.Repository, l Locker, c Cache, p Publisher) *Rel
 	return &ReleaseService{repo: r, locker: l, cache: c, publisher: p}
 }
 
-func (s *ReleaseService) ReleaseStock(ctx context.Context, orderID string) error {
-	// Acquire generic lock for order to avoid concurrent confirm/release
+// ReleaseStock releases (cancels) all Reserved reservations for an order
+func (s *ReleaseService) ReleaseStock(ctx context.Context, orderID string) (int64, error) {
+	if orderID == "" {
+		return 0, fmt.Errorf("order_id is required")
+	}
+
 	lockKey := fmt.Sprintf("lock:order:%s", orderID)
 	ok, err := s.locker.Lock(ctx, lockKey, 8*time.Second)
 	if err != nil || !ok {
-		return fmt.Errorf("failed to lock order: %w", err)
+		return 0, fmt.Errorf("failed to acquire lock: %w", err)
 	}
 	defer s.locker.Unlock(ctx, lockKey)
 
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 
+	// Get all reservations for this order
 	reservations, err := s.repo.GetReservationByOrder(ctx, tx, orderID)
 	if err != nil {
-		return err
-	}
-	if len(reservations) == 0 {
-		return nil
+		return 0, err
 	}
 
-	for _, r := range reservations {
-		if r.Status == entities.Confirmed {
-			return fmt.Errorf("order %s is already confirmed", orderID)
-		}
-	}
+	releasedCount := int64(0)
+	skus := make(map[string]struct{})
 
-	for _, r := range reservations {
-		// Only process Reserved status - skip Already Released/Confirmed
-		if r.Status != entities.Reserved {
+	// Release only Reserved status reservations
+	for _, res := range reservations {
+		// Skip already Confirmed or Released
+		if res.Status != entities.Reserved {
 			continue
 		}
-		// fetch product stock
-		ps, err := s.repo.GetProductStockForUpdate(ctx, tx, r.SKU, r.WarehouseID)
+
+		// Fetch stock
+		ps, err := s.repo.GetProductStockForUpdate(ctx, tx, res.SKU, res.WarehouseID)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if ps == nil {
-			return fmt.Errorf("product stock not found %s@%s", r.SKU, r.WarehouseID)
+			return 0, fmt.Errorf("stock not found: %s@%s", res.SKU, res.WarehouseID)
 		}
 
-		// Only release if there's actually reserved quantity to release
-		// This prevents double-release if function called multiple times
-		if ps.ReservedQuantity < r.Quantity {
-			return fmt.Errorf("inconsistent state: reservation qty %d exceeds reserved %d for %s@%s", r.Quantity, ps.ReservedQuantity, r.SKU, r.WarehouseID)
-		}
-
-		// release reserved quantity back to available
-		ps.Release(r.Quantity)
+		// Release reserved qty
+		ps.Release(res.Quantity)
 		if err := s.repo.UpsertProductStock(ctx, tx, ps); err != nil {
-			return err
+			return 0, err
 		}
-		// ledger
-		mov := &entities.StockMovement{SKU: r.SKU, WarehouseID: r.WarehouseID, Type: entities.Release, Quantity: r.Quantity, ReferenceID: orderID, CreatedAt: time.Now()}
+
+		// Log movement
+		mov := &entities.StockMovement{
+			ID:          fmt.Sprintf("mov-%d", time.Now().UnixNano()),
+			SKU:         res.SKU,
+			WarehouseID: res.WarehouseID,
+			Type:        entities.Release,
+			Quantity:    res.Quantity,
+			ReferenceID: orderID,
+			CreatedAt:   time.Now(),
+		}
 		if err := s.repo.CreateMovement(ctx, tx, mov); err != nil {
-			return err
+			return 0, err
 		}
-		// update reservation status to Released
-		if err := s.repo.UpdateReservationStatus(ctx, tx, r.ID, string(entities.Released)); err != nil {
-			return err
+
+		// Mark reservation as Released
+		if err := s.repo.UpdateReservationStatus(ctx, tx, res.ID, string(entities.Released)); err != nil {
+			return 0, err
 		}
-		// publish event
-		evt := map[string]interface{}{"order_id": orderID, "sku": r.SKU, "quantity": r.Quantity, "warehouse_id": r.WarehouseID}
-		if payload, e := json.Marshal(evt); e == nil && s.publisher != nil {
+
+		releasedCount += res.Quantity
+		skus[res.SKU] = struct{}{}
+
+		// Publish event
+		if payload, err := json.Marshal(map[string]interface{}{
+			"order_id":      orderID,
+			"reservation_id": res.ID,
+			"sku":           res.SKU,
+			"warehouse_id":  res.WarehouseID,
+			"quantity":      res.Quantity,
+		}); err == nil && s.publisher != nil {
 			_ = s.publisher.Publish("inventory.stock.released", payload)
 		}
-		// refresh cache
-		_ = s.cache.DeleteStockSnapshot(ctx, r.SKU)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	// Cache bust
+	for sku := range skus {
+		_ = s.cache.DeleteStockSnapshot(ctx, sku)
+	}
+
+	return releasedCount, nil
 }
+

@@ -155,7 +155,9 @@ function ReserveView({ token, notify }) {
   const [orderId, setOrderId] = useState('');
   const [sku, setSku] = useState('');
   const [qty, setQty] = useState(1);
+  const [warehouse, setWarehouse] = useState('');
   const [result, setResult] = useState(null);
+  const [order, setOrder] = useState(null);
 
   const reserve = async () => {
     const targetSku = sku.trim();
@@ -165,62 +167,127 @@ function ReserveView({ token, notify }) {
       return;
     }
     
-    // Get current order to merge items
-    const order = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
-    if (!isMutableOrderStatus(order?.status)) {
-      notify('error', 'Ордер уже финализирован');
+    // Check order exists and is mutable
+    try {
+      const orderCheck = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
+      if (!orderCheck || !orderCheck.order_id) {
+        notify('error', 'Заказ не найден');
+        return;
+      }
+      if (!isMutableOrderStatus(orderCheck.status)) {
+        notify('error', 'Заказ уже финализирован');
+        return;
+      }
+    } catch (e) {
+      notify('error', 'Не удалось проверить заказ: ' + e.message);
       return;
     }
-    
-    // Merge new item with existing items
-    const currentItems = Array.isArray(order?.items) ? order.items : [];
-    const updatedItems = adjustOrderItems(currentItems, targetSku, targetQty);
-    
-    const data = await requestJSON('/inventory/reserve', jsonPost({ 
-      order_id: orderId.trim(), 
-      items: updatedItems 
-    }), token);
-    setResult(data);
-    notify('success', 'Резервация выполнена');
+
+    // Simple: reserve 1 item at a time
+    try {
+      const data = await requestJSON('/inventory/reserve', jsonPost({
+        order_id: orderId.trim(),
+        items: [{ sku: targetSku, warehouse_id: warehouse.trim(), qty: targetQty }]
+      }), token);
+      setResult(data);
+      setSku('');
+      setQty(1);
+      setWarehouse('');
+      notify('success', `Зарезервировано: ${targetSku} x ${targetQty}`);
+      
+      // Refresh order to show updated items
+      const updatedOrder = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
+      setOrder(updatedOrder);
+    } catch (e) {
+      notify('error', 'Ошибка при резервации: ' + e.message);
+    }
   };
+
+  const confirm = async () => {
+    if (!orderId.trim()) {
+      notify('error', 'Заполни order id');
+      return;
+    }
+    try {
+      const data = await requestJSON('/inventory/confirm', jsonPost({ order_id: orderId.trim() }), token);
+      setResult(data);
+      notify('success', 'Заказ подтвержден (зарезервированные товары списаны)');
+      
+      // Refresh order
+      const updatedOrder = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
+      setOrder(updatedOrder);
+    } catch (e) {
+      notify('error', 'Ошибка при подтверждении: ' + e.message);
+    }
+  };
+
   const release = async () => {
     if (!orderId.trim()) {
       notify('error', 'Заполни order id');
       return;
     }
-    const order = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
-    if (!isMutableOrderStatus(order?.status)) {
-      notify('error', 'Ордер уже финализирован');
-      return;
+    try {
+      const data = await requestJSON('/inventory/release', jsonPost({ order_id: orderId.trim() }), token);
+      setResult(data);
+      notify('success', 'Все резервации отменены (товары вернулись в stock)');
+      
+      // Refresh order
+      const updatedOrder = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
+      setOrder(updatedOrder);
+    } catch (e) {
+      notify('error', 'Ошибка при отмене: ' + e.message);
     }
-    // Release отменяет ВСЕ резервации по заказу - это финальная отмена
-    await requestJSON('/inventory/release', jsonPost({ order_id: orderId.trim() }), token);
-    
-    // Refresh order to get updated items (should be empty after release)
-    const refreshedOrder = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
-    
-    setResult({ order_id: orderId.trim(), action: 'all_reservations_released', items: refreshedOrder?.items || [] });
-    notify('success', 'Все резервации по заказу отменены');
-  };
-  const confirm = async () => {
-    const data = await requestJSON('/inventory/confirm', jsonPost({ order_id: orderId }), token);
-    setResult(data);
-    notify('success', 'Списание подтверждено');
   };
 
   return (
     <section className="card">
-      <h3>Reserve / Confirm / Release</h3>
-      <p className="hint">Reserve добавляет товары к заказу. Confirm финализирует списание. Release отменяет ВСЕ резервации (финальная отмена).</p>
-      <input placeholder="order id" value={orderId} onChange={(e) => setOrderId(e.target.value)} />
-      <input placeholder="sku" value={sku} onChange={(e) => setSku(e.target.value)} />
-      <input type="number" value={qty} onChange={(e) => setQty(e.target.value)} />
-      <div>
-        <button onClick={() => wrapAction(reserve, notify)}>Reserve</button>
-        <button onClick={() => wrapAction(confirm, notify)}>Confirm</button>
-        <button onClick={() => wrapAction(release, notify)}>Release (отмена)</button>
+      <h3>Workflow: Reserve → Confirm → Release</h3>
+      <p className="hint">
+        <strong>Reserve:</strong> зарезервировать 1 товар в инвентаре<br/>
+        <strong>Confirm:</strong> финализировать - товары списаны из stock<br/>
+        <strong>Release:</strong> отменить резервации - вернуть товары в stock
+      </p>
+      
+      <div style={{ marginBottom: '20px' }}>
+        <h4>Заказ: {orderId || '—'}</h4>
+        <input placeholder="order id" value={orderId} onChange={(e) => setOrderId(e.target.value)} />
+        {order && (
+          <div style={{ marginTop: '10px', padding: '10px', background: '#f5f5f5' }}>
+            <strong>Текущие товары в заказе:</strong>
+            {order.items && order.items.length > 0 ? (
+              <ul>
+                {order.items.map((item, i) => (
+                  <li key={i}>{item.sku} x {item.qty}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>Товаров нет</p>
+            )}
+          </div>
+        )}
       </div>
-      <ResultPanel title="Reserve Result" data={result} />
+
+      <div style={{ marginBottom: '20px', border: '1px solid #ddd', padding: '15px', borderRadius: '4px' }}>
+        <h4>1. Зарезервировать товар</h4>
+        <input placeholder="sku" value={sku} onChange={(e) => setSku(e.target.value)} />
+        <input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
+        <input placeholder="warehouse id (опционально)" value={warehouse} onChange={(e) => setWarehouse(e.target.value)} />
+        <button onClick={() => wrapAction(reserve, notify)}>Reserve</button>
+      </div>
+
+      <div style={{ marginBottom: '20px', border: '1px solid #ddd', padding: '15px', borderRadius: '4px' }}>
+        <h4>2. Финализировать заказ</h4>
+        <p className="hint">Переводит все Reserved → Confirmed и вычитает из stock</p>
+        <button onClick={() => wrapAction(confirm, notify)}>Confirm</button>
+      </div>
+
+      <div style={{ marginBottom: '20px', border: '1px solid #ddd', padding: '15px', borderRadius: '4px' }}>
+        <h4>3. Отменить (только Reserved)</h4>
+        <p className="hint">Отменяет только Reserved резервации, возвращает товары в stock</p>
+        <button onClick={() => wrapAction(release, notify)} style={{ background: '#f55' }}>Release</button>
+      </div>
+
+      {result && <ResultPanel title="Результат" data={result} />}
     </section>
   );
 }
@@ -651,31 +718,6 @@ function buildReservePayload(orderId, sku, qty) {
     return null;
   }
   return { order_id: id, items: [{ sku: s, warehouse_id: '', qty: q }] };
-}
-
-function adjustOrderItems(items, sku, delta) {
-  const target = normalizeSku(sku);
-  const result = [];
-  let matched = false;
-  for (const item of items || []) {
-    const currentSku = String(item?.sku || '').trim();
-    const currentQty = Number(item?.qty || 0);
-    if (normalizeSku(currentSku) !== target) {
-      if (currentSku && currentQty > 0) {
-        result.push({ sku: currentSku, qty: currentQty });
-      }
-      continue;
-    }
-    matched = true;
-    const nextQty = currentQty + delta;
-    if (nextQty > 0) {
-      result.push({ sku: currentSku, qty: nextQty });
-    }
-  }
-  if (!matched && delta < 0) {
-    return items || [];
-  }
-  return result;
 }
 
 function formatKey(k) {

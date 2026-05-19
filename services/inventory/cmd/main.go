@@ -129,15 +129,15 @@ func main() {
 			log.Printf("order.created unmarshal: %v", err)
 			return
 		}
-		items := []usecases.ItemReq{}
-		for _, it := range ev.Items {
-			items = append(items, usecases.ItemReq{SKU: it.Sku, WarehouseID: "", Quantity: it.Qty})
-		}
-		go func(orderID string, items []usecases.ItemReq) {
-			if _, err := reserveUC.ReserveStock(context.Background(), orderID, items); err != nil {
-				log.Printf("reserve err: %v", err)
+		go func(orderID string, items []*evpb.OrderItem) {
+			ctx := context.Background()
+			// Reserve each item individually
+			for _, it := range items {
+				if _, err := reserveUC.ReserveStock(ctx, orderID, it.Sku, "", it.Qty); err != nil {
+					log.Printf("reserve item %s err: %v", it.Sku, err)
+				}
 			}
-		}(ev.OrderId, items)
+		}(ev.OrderId, ev.Items)
 	})
 
 	_, _ = natsPub.Subscribe("order.cancelled", func(m *nats.Msg) {
@@ -147,7 +147,7 @@ func main() {
 			return
 		}
 		go func(orderID string) {
-			if err := releaseUC.ReleaseStock(context.Background(), orderID); err != nil {
+			if _, err := releaseUC.ReleaseStock(context.Background(), orderID); err != nil {
 				log.Printf("release err: %v", err)
 			}
 		}(ev.OrderId)
@@ -160,7 +160,7 @@ func main() {
 			return
 		}
 		go func(orderID string) {
-			if err := confirmUC.ConfirmStockDeduction(context.Background(), orderID); err != nil {
+			if _, err := confirmUC.ConfirmStock(context.Background(), orderID); err != nil {
 				log.Printf("confirm err: %v", err)
 			}
 		}(ev.OrderId)

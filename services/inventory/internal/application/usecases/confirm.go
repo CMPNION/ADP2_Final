@@ -22,27 +22,31 @@ func NewConfirmService(r domain.Repository, l Locker, c Cache, p Publisher) *Con
 	return &ConfirmService{repo: r, locker: l, cache: c, publisher: p}
 }
 
-func (s *ConfirmService) ConfirmStockDeduction(ctx context.Context, orderID string) error {
+func (s *ConfirmService) ConfirmStock(ctx context.Context, orderID string) (int64, error) {
+	if orderID == "" {
+		return 0, fmt.Errorf("order_id is required")
+	}
+
 	lockKey := fmt.Sprintf("lock:order:%s", orderID)
 	ok, err := s.locker.Lock(ctx, lockKey, 8*time.Second)
 	if err != nil || !ok {
-		return fmt.Errorf("failed to lock order: %w", err)
+		return 0, fmt.Errorf("failed to lock order: %w", err)
 	}
 	defer s.locker.Unlock(ctx, lockKey)
 
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 
 	reservations, err := s.repo.GetReservationByOrder(ctx, tx, orderID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if len(reservations) == 0 {
-		return nil
-	}
+
+	confirmedCount := int64(0)
+	skus := make(map[string]struct{})
 
 	for _, r := range reservations {
 		if r.Status != entities.Reserved {
@@ -50,31 +54,32 @@ func (s *ConfirmService) ConfirmStockDeduction(ctx context.Context, orderID stri
 		}
 		ps, err := s.repo.GetProductStockForUpdate(ctx, tx, r.SKU, r.WarehouseID)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if ps == nil {
-			return fmt.Errorf("product stock not found %s@%s", r.SKU, r.WarehouseID)
+			return 0, fmt.Errorf("stock not found: %s@%s", r.SKU, r.WarehouseID)
 		}
 		// deduct
 		ps.Deduct(r.Quantity)
 		if err := s.repo.UpsertProductStock(ctx, tx, ps); err != nil {
-			return err
+			return 0, err
 		}
 		// ledger OUT
 		mov := &entities.StockMovement{SKU: r.SKU, WarehouseID: r.WarehouseID, Type: entities.Out, Quantity: r.Quantity, ReferenceID: orderID, CreatedAt: time.Now()}
 		if err := s.repo.CreateMovement(ctx, tx, mov); err != nil {
-			return err
+			return 0, err
 		}
 		if err := s.repo.UpdateReservationStatus(ctx, tx, r.ID, string(entities.Confirmed)); err != nil {
-			return err
+			return 0, err
 		}
+		confirmedCount += r.Quantity
+		skus[r.SKU] = struct{}{}
+
 		// publish confirmed
-		evt := map[string]interface{}{"order_id": orderID, "sku": r.SKU}
+		evt := map[string]interface{}{"order_id": orderID, "sku": r.SKU, "quantity": r.Quantity, "warehouse_id": r.WarehouseID}
 		if payload, e := json.Marshal(evt); e == nil && s.publisher != nil {
 			_ = s.publisher.Publish("inventory.stock.confirmed", payload)
 		}
-		// refresh cache
-		_ = s.cache.DeleteStockSnapshot(ctx, r.SKU)
 		// safety check
 		if ps.AvailableQuantity() < ps.SafetyStockLevel {
 			payload, _ := json.Marshal(map[string]interface{}{"sku": ps.SKU, "warehouse_id": ps.WarehouseID, "available": ps.AvailableQuantity(), "threshold": ps.SafetyStockLevel})
@@ -84,5 +89,14 @@ func (s *ConfirmService) ConfirmStockDeduction(ctx context.Context, orderID stri
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	// Cache bust
+	for sku := range skus {
+		_ = s.cache.DeleteStockSnapshot(ctx, sku)
+	}
+
+	return confirmedCount, nil
 }

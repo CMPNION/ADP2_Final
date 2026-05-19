@@ -2,7 +2,6 @@ package grpc
 
 import (
 	"context"
-	"strings"
 
 	"github.com/cmpnion/adp-final/services/inventory/internal/application/usecases"
 	"github.com/cmpnion/adp-final/services/inventory/internal/domain"
@@ -22,23 +21,39 @@ func NewServer(repo domain.Repository, reserve *usecases.ReserveService, release
 }
 
 func (s *Server) ReserveStock(ctx context.Context, req *pb.ReserveStockRequest) (*pb.ReserveStockResponse, error) {
-	items := []usecases.ItemReq{}
-	for _, it := range req.Items {
-		items = append(items, usecases.ItemReq{SKU: it.Sku, WarehouseID: it.WarehouseId, Quantity: it.Qty})
+	if req.OrderId == "" {
+		return &pb.ReserveStockResponse{Success: false, Message: "order_id is required"}, nil
 	}
-	res, err := s.reserve.ReserveStock(ctx, req.OrderId, items)
-	if err != nil {
-		return &pb.ReserveStockResponse{Success: false, Message: err.Error()}, nil
+	if len(req.Items) == 0 {
+		return &pb.ReserveStockResponse{Success: false, Message: "items are required"}, nil
 	}
-	ids := make([]string, 0, len(res))
-	for _, r := range res {
-		ids = append(ids, r.ReservationID)
+
+	// Reserve each item individually (simple 1:1 reservations)
+	reservedCount := 0
+	var lastErr error
+	for _, item := range req.Items {
+		_, err := s.reserve.ReserveStock(ctx, req.OrderId, item.Sku, item.WarehouseId, item.Qty)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		reservedCount++
 	}
-	return &pb.ReserveStockResponse{Success: true, Message: strings.Join(ids, ",")}, nil
+
+	if reservedCount == 0 && lastErr != nil {
+		return &pb.ReserveStockResponse{Success: false, Message: lastErr.Error()}, nil
+	}
+	if reservedCount < len(req.Items) {
+		return &pb.ReserveStockResponse{
+			Success: true,
+			Message: "partially reserved: " + lastErr.Error(),
+		}, nil
+	}
+	return &pb.ReserveStockResponse{Success: true, Message: "all items reserved"}, nil
 }
 
 func (s *Server) ReleaseStock(ctx context.Context, req *pb.ReleaseStockRequest) (*pb.ReleaseStockResponse, error) {
-	err := s.release.ReleaseStock(ctx, req.OrderId)
+	_, err := s.release.ReleaseStock(ctx, req.OrderId)
 	if err != nil {
 		return &pb.ReleaseStockResponse{Success: false}, nil
 	}
@@ -46,7 +61,7 @@ func (s *Server) ReleaseStock(ctx context.Context, req *pb.ReleaseStockRequest) 
 }
 
 func (s *Server) ConfirmStockDeduction(ctx context.Context, req *pb.ConfirmStockDeductionRequest) (*pb.ConfirmStockDeductionResponse, error) {
-	err := s.confirm.ConfirmStockDeduction(ctx, req.OrderId)
+	_, err := s.confirm.ConfirmStock(ctx, req.OrderId)
 	if err != nil {
 		return &pb.ConfirmStockDeductionResponse{Success: false}, nil
 	}
