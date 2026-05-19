@@ -158,17 +158,28 @@ function ReserveView({ token, notify }) {
   const [result, setResult] = useState(null);
 
   const reserve = async () => {
-    const body = buildReservePayload(orderId, sku, qty);
-    if (!body) {
+    const targetSku = sku.trim();
+    const targetQty = Number(qty);
+    if (!orderId.trim() || !targetSku || targetQty <= 0) {
       notify('error', 'Заполни order id, sku и qty > 0');
       return;
     }
+    
+    // Get current order to merge items
     const order = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
     if (!isMutableOrderStatus(order?.status)) {
       notify('error', 'Ордер уже финализирован');
       return;
     }
-    const data = await requestJSON('/inventory/reserve', jsonPost(body), token);
+    
+    // Merge new item with existing items
+    const currentItems = Array.isArray(order?.items) ? order.items : [];
+    const updatedItems = adjustOrderItems(currentItems, targetSku, targetQty);
+    
+    const data = await requestJSON('/inventory/reserve', jsonPost({ 
+      order_id: orderId.trim(), 
+      items: updatedItems 
+    }), token);
     setResult(data);
     notify('success', 'Резервация выполнена');
   };
@@ -184,7 +195,11 @@ function ReserveView({ token, notify }) {
     }
     // Release отменяет ВСЕ резервации по заказу - это финальная отмена
     await requestJSON('/inventory/release', jsonPost({ order_id: orderId.trim() }), token);
-    setResult({ order_id: orderId.trim(), action: 'all_reservations_released' });
+    
+    // Refresh order to get updated items (should be empty after release)
+    const refreshedOrder = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
+    
+    setResult({ order_id: orderId.trim(), action: 'all_reservations_released', items: refreshedOrder?.items || [] });
     notify('success', 'Все резервации по заказу отменены');
   };
   const confirm = async () => {
