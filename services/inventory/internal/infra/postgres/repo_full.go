@@ -262,7 +262,9 @@ func (r *PostgresRepo) LockStocksInDB(ctx context.Context, tx *sql.Tx, keys []st
 }
 
 func (r *PostgresRepo) FindWarehouseForReservation(ctx context.Context, tx *sql.Tx, sku string, qty int64) (string, error) {
-	q := `SELECT warehouse_id FROM product_stocks WHERE sku=$1 AND (total_qty - reserved_qty) >= $2 ORDER BY (total_qty - reserved_qty) DESC LIMIT 1 FOR UPDATE`
+	// NOTE: No FOR UPDATE lock here - Redis lock already protects this
+	// FOR UPDATE causes DB-level lock contention, slowing down the query significantly
+	q := `SELECT warehouse_id FROM product_stocks WHERE sku=$1 AND (total_qty - reserved_qty) >= $2 ORDER BY (total_qty - reserved_qty) DESC LIMIT 1`
 	row := tx.QueryRowContext(ctx, q, sku, qty)
 	var wid string
 	if err := row.Scan(&wid); err != nil {

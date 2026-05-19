@@ -42,7 +42,6 @@ type ReserveService struct {
 func NewReserveService(r domain.Repository, l Locker, c Cache, p Publisher) *ReserveService {
 	return &ReserveService{repo: r, locker: l, cache: c, publisher: p}
 }
-
 // ReserveStock - simple 1:1 reservation
 // orderID + sku + qty + warehouse = 1 reservation record
 // No merging, no auto-warehouse selection
@@ -61,14 +60,28 @@ func (s *ReserveService) ReserveStock(ctx context.Context, orderID string, sku s
 		return nil, fmt.Errorf("qty must be > 0")
 	}
 	warehouseID = strings.TrimSpace(warehouseID)
+
+	// Lock this specific SKU (before we know warehouse)
+	// Use wildcard lock if warehouse not specified yet
+	lockKey := fmt.Sprintf("lock:stock:%s:*", sku)
+	if warehouseID != "" {
+		lockKey = fmt.Sprintf("lock:stock:%s:%s", sku, warehouseID)
+	}
+	ok, err := s.locker.Lock(ctx, lockKey, 8*time.Second)
+	if err != nil || !ok {
+		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+	}
+	defer s.locker.Unlock(ctx, lockKey)
+
+	// Single transaction for everything
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// Find warehouse if not specified
 	if warehouseID == "" {
-		// Auto-select any warehouse with available stock
-		tx, err := s.repo.BeginTx(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer tx.Rollback()
-		
 		found, err := s.repo.FindWarehouseForReservation(ctx, tx, sku, qty)
 		if err != nil {
 			return nil, err
@@ -77,22 +90,18 @@ func (s *ReserveService) ReserveStock(ctx context.Context, orderID string, sku s
 			return nil, fmt.Errorf("no warehouse has %d units of %s", qty, sku)
 		}
 		warehouseID = found
+		
+		// Update lock to specific warehouse+sku
+		if err := s.locker.Unlock(ctx, lockKey); err != nil {
+			return nil, fmt.Errorf("failed to unlock: %w", err)
+		}
+		lockKey = fmt.Sprintf("lock:stock:%s:%s", sku, warehouseID)
+		ok, err := s.locker.Lock(ctx, lockKey, 8*time.Second)
+		if err != nil || !ok {
+			return nil, fmt.Errorf("failed to acquire specific lock: %w", err)
+		}
+		defer s.locker.Unlock(ctx, lockKey)
 	}
-
-	// Lock this specific warehouse+sku combo
-	lockKey := fmt.Sprintf("lock:stock:%s:%s", sku, warehouseID)
-	ok, err := s.locker.Lock(ctx, lockKey, 8*time.Second)
-	if err != nil || !ok {
-		return nil, fmt.Errorf("failed to acquire lock: %w", err)
-	}
-	defer s.locker.Unlock(ctx, lockKey)
-
-	// Transaction
-	tx, err := s.repo.BeginTx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
 
 	// Check if this exact reservation already exists (idempotent)
 	existing, err := s.repo.GetReservationByOrder(ctx, tx, orderID)
