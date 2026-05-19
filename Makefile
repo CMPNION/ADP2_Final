@@ -5,7 +5,7 @@ K8S_DIR ?= k8s
 LOADTEST_DIR ?= loadtesting
 TARGET_URL ?= http://localhost:8080
 
-.PHONY: help up down rebuild clean reset wait-for-databases migrate migrate-inventory migrate-catalog migrate-order migrate-identity proto-sync test-backend test-frontend test-all stack bootstrap terraform-init terraform-fmt terraform-validate terraform-apply k8s-apply monitoring-apply platform-up all locust locust-install
+.PHONY: help up down rebuild clean reset wait-for-databases migrate migrate-inventory migrate-catalog migrate-order migrate-identity proto-sync test-backend test-frontend test-all stack bootstrap terraform-init terraform-fmt terraform-validate terraform-apply k8s-apply monitoring-apply platform-up all locust locust-install k8s-destroy terraform-destroy destroy-all
 
 help:
 	@echo "Targets:"
@@ -25,6 +25,11 @@ help:
 	@echo "  make test-frontend     - run frontend tests"
 	@echo "  make test-all          - backend + frontend tests"
 	@echo "  make bootstrap         - full setup from zero: clean, up, migrate, test-all"
+	@echo ""
+	@echo "CLEANUP & DESTROY:"
+	@echo "  make k8s-destroy       - delete all Kubernetes manifests (HPA, monitoring, ingress, services)"
+	@echo "  make terraform-destroy - destroy Terraform infrastructure"
+	@echo "  make destroy-all       - full teardown: k8s + terraform + docker + volumes"
 
 up:
 	docker compose up -d --build
@@ -113,3 +118,28 @@ locust-install:
 locust:
 	$(MAKE) locust-install
 	python3 -m locust -f $(LOADTEST_DIR)/locustfile.py --host=$(TARGET_URL)
+
+# === CLEANUP & DESTROY TARGETS ===
+
+k8s-destroy:
+	@echo "Deleting Kubernetes manifests..."
+	-kubectl delete -f $(K8S_DIR)/autoscaling/hpa.yaml 2>/dev/null || true
+	-kubectl delete -f $(K8S_DIR)/monitoring/stack.yaml 2>/dev/null || true
+	-kubectl delete -f $(K8S_DIR)/ingress/ingress.yaml 2>/dev/null || true
+	-kubectl delete -f $(K8S_DIR)/frontend/frontend.yaml 2>/dev/null || true
+	-kubectl delete -f $(K8S_DIR)/backend/backend.yaml 2>/dev/null || true
+	@echo "Kubernetes manifests deleted."
+
+terraform-destroy:
+	@echo "Destroying Terraform infrastructure..."
+	terraform -chdir=$(TF_DIR) destroy -auto-approve || true
+	@echo "Terraform state cleaned up."
+
+destroy-all: k8s-destroy terraform-destroy clean
+	@echo ""
+	@echo "✓ Full teardown completed:"
+	@echo "  - Kubernetes manifests deleted"
+	@echo "  - Terraform infrastructure destroyed"
+	@echo "  - Docker containers stopped and volumes removed"
+	@echo ""
+	@echo "To rebuild: make all"

@@ -173,9 +173,8 @@ function ReserveView({ token, notify }) {
     notify('success', 'Резервация выполнена');
   };
   const release = async () => {
-    const targetQty = Number(qty);
-    if (!orderId.trim() || !sku.trim() || targetQty <= 0) {
-      notify('error', 'Заполни order id, sku и qty > 0');
+    if (!orderId.trim()) {
+      notify('error', 'Заполни order id');
       return;
     }
     const order = await requestJSON(`/orders?order_id=${encodeURIComponent(orderId.trim())}`, { method: 'GET' }, token);
@@ -183,18 +182,10 @@ function ReserveView({ token, notify }) {
       notify('error', 'Ордер уже финализирован');
       return;
     }
-    const currentItems = Array.isArray(order?.items) ? order.items : [];
-    const adjusted = adjustOrderItems(currentItems, sku.trim(), -targetQty);
-    if (adjusted.length === currentItems.length && !currentItems.some((it) => normalizeSku(it?.sku) === normalizeSku(sku))) {
-      notify('error', 'SKU не найден в ордере');
-      return;
-    }
+    // Release отменяет ВСЕ резервации по заказу - это финальная отмена
     await requestJSON('/inventory/release', jsonPost({ order_id: orderId.trim() }), token);
-    if (adjusted.length > 0) {
-      await requestJSON('/inventory/reserve', jsonPost({ order_id: orderId.trim(), items: adjusted.map((it) => ({ sku: it.sku, warehouse_id: '', qty: it.qty })) }), token);
-    }
-    setResult({ order_id: orderId.trim(), items: adjusted });
-    notify('success', 'Количество в ордере уменьшено');
+    setResult({ order_id: orderId.trim(), action: 'all_reservations_released' });
+    notify('success', 'Все резервации по заказу отменены');
   };
   const confirm = async () => {
     const data = await requestJSON('/inventory/confirm', jsonPost({ order_id: orderId }), token);
@@ -204,15 +195,15 @@ function ReserveView({ token, notify }) {
 
   return (
     <section className="card">
-      <h3>Reserve / Release / Confirm</h3>
-      <p className="hint">Reserve увеличивает qty, Release уменьшает qty по SKU, Confirm подтверждает текущее списание.</p>
+      <h3>Reserve / Confirm / Release</h3>
+      <p className="hint">Reserve добавляет товары к заказу. Confirm финализирует списание. Release отменяет ВСЕ резервации (финальная отмена).</p>
       <input placeholder="order id" value={orderId} onChange={(e) => setOrderId(e.target.value)} />
       <input placeholder="sku" value={sku} onChange={(e) => setSku(e.target.value)} />
       <input type="number" value={qty} onChange={(e) => setQty(e.target.value)} />
       <div>
         <button onClick={() => wrapAction(reserve, notify)}>Reserve</button>
-        <button onClick={() => wrapAction(release, notify)}>Release</button>
         <button onClick={() => wrapAction(confirm, notify)}>Confirm</button>
+        <button onClick={() => wrapAction(release, notify)}>Release (отмена)</button>
       </div>
       <ResultPanel title="Reserve Result" data={result} />
     </section>

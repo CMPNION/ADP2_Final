@@ -52,6 +52,7 @@ func (s *ReleaseService) ReleaseStock(ctx context.Context, orderID string) error
 	}
 
 	for _, r := range reservations {
+		// Only process Reserved status - skip Already Released/Confirmed
 		if r.Status != entities.Reserved {
 			continue
 		}
@@ -63,7 +64,14 @@ func (s *ReleaseService) ReleaseStock(ctx context.Context, orderID string) error
 		if ps == nil {
 			return fmt.Errorf("product stock not found %s@%s", r.SKU, r.WarehouseID)
 		}
-		// release reserved
+
+		// Only release if there's actually reserved quantity to release
+		// This prevents double-release if function called multiple times
+		if ps.ReservedQuantity < r.Quantity {
+			return fmt.Errorf("inconsistent state: reservation qty %d exceeds reserved %d for %s@%s", r.Quantity, ps.ReservedQuantity, r.SKU, r.WarehouseID)
+		}
+
+		// release reserved quantity back to available
 		ps.Release(r.Quantity)
 		if err := s.repo.UpsertProductStock(ctx, tx, ps); err != nil {
 			return err
@@ -73,11 +81,11 @@ func (s *ReleaseService) ReleaseStock(ctx context.Context, orderID string) error
 		if err := s.repo.CreateMovement(ctx, tx, mov); err != nil {
 			return err
 		}
-		// update reservation
+		// update reservation status to Released
 		if err := s.repo.UpdateReservationStatus(ctx, tx, r.ID, string(entities.Released)); err != nil {
 			return err
 		}
-		// publish
+		// publish event
 		evt := map[string]interface{}{"order_id": orderID, "sku": r.SKU, "quantity": r.Quantity, "warehouse_id": r.WarehouseID}
 		if payload, e := json.Marshal(evt); e == nil && s.publisher != nil {
 			_ = s.publisher.Publish("inventory.stock.released", payload)
